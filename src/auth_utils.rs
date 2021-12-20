@@ -18,7 +18,7 @@ use std::path::Path;
 use nkeys::KeyPair;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use rustls::{Certificate, PrivateKey};
+use crate::tokio_rustls::rustls::{Certificate,PrivateKey};
 
 use crate::SecureString;
 

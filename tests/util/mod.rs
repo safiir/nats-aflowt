@@ -120,9 +120,9 @@ pub fn run_basic_server() -> Server {
 }
 
 // Helper function to return server and client.
-pub fn run_basic_jetstream() -> (Server, Connection, JetStream) {
+pub async fn run_basic_jetstream() -> (Server, Connection, JetStream) {
     let s = run_server("tests/configs/jetstream.conf");
-    let nc = nats::connect(&s.client_url()).unwrap();
+    let nc = nats::connect(&s.client_url()).await.unwrap();
     let js = JetStream::new(nc.clone(), JetStreamOptions::default());
 
     (s, nc, js)

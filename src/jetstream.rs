@@ -169,17 +169,21 @@
 //! # Ok(()) }
 //! ```
 
+use pin_project::pin_project;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
 use std::{
     collections::{HashSet, VecDeque},
     convert::TryFrom,
     error, fmt,
     fmt::Debug,
+    future::Future,
     io::{self, ErrorKind},
+    pin::Pin,
+    task::{Context, Poll},
     time::Duration,
 };
-
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_repr::{Deserialize_repr, Serialize_repr};
+use tokio_stream::Stream;
 
 pub use crate::jetstream_types::*;
 
@@ -541,7 +545,9 @@ struct PagedResponse<T> {
 
 /// An iterator over paged `JetStream` API operations.
 #[derive(Debug)]
+#[pin_project]
 pub struct PagedIterator<'a, T> {
+    #[pin]
     manager: &'a JetStream,
     subject: String,
     offset: i64,
@@ -549,51 +555,53 @@ pub struct PagedIterator<'a, T> {
     done: bool,
 }
 
-impl<'a, T> std::iter::FusedIterator for PagedIterator<'a, T> where T: DeserializeOwned + Debug {}
-
-impl<'a, T> Iterator for PagedIterator<'a, T>
+impl<T> Stream for PagedIterator<'_, T>
 where
     T: DeserializeOwned + Debug,
 {
     type Item = io::Result<T>;
 
-    fn next(&mut self) -> Option<io::Result<T>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.done {
-            return None;
+            return Poll::Ready(None);
         }
         if !self.items.is_empty() {
-            return Some(Ok(self.items.pop_front().unwrap()));
+            return Poll::Ready(Some(Ok(self.items.pop_front().unwrap())));
         }
         let req = serde_json::ser::to_vec(&PagedRequest {
             offset: self.offset,
         })
         .unwrap();
-
-        let res: io::Result<PagedResponse<T>> = self.manager.js_request(&self.subject, &req);
-
-        let mut page = match res {
-            Err(e) => {
+        let fut = self.manager.js_request(&self.subject, &req);
+        let next_poll: Poll<io::Result<PagedResponse<T>>> = Pin::new(&mut Box::pin(fut)).poll(cx);
+        let mut page: PagedResponse<T> = match next_poll {
+            Poll::Ready(Err(e)) => {
                 self.done = true;
-                return Some(Err(e));
+                return Poll::Ready(Some(Err(e)));
             }
-            Ok(page) => page,
+            Poll::Ready(Ok(page)) => page,
+            Poll::Pending => return Poll::Pending,
         };
-
         if page.items.is_none() {
             self.done = true;
-            return None;
+            return Poll::Ready(None);
         }
-
         let items = page.items.take().unwrap();
-
         self.offset += i64::try_from(items.len()).unwrap();
         self.items = items;
-
         if self.items.is_empty() {
             self.done = true;
-            None
+            Poll::Ready(None)
         } else {
-            Some(Ok(self.items.pop_front().unwrap()))
+            Poll::Ready(Some(Ok(self.items.pop_front().unwrap())))
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        if self.done {
+            (0, Some(0))
+        } else {
+            (self.items.len(), None)
         }
     }
 }
@@ -612,32 +620,35 @@ impl JetStream {
     }
 
     /// Publishes a message to `JetStream`
-    pub fn publish(&self, subject: &str, data: impl AsRef<[u8]>) -> io::Result<PublishAck> {
+    pub async fn publish(&self, subject: &str, data: impl AsRef<[u8]>) -> io::Result<PublishAck> {
         self.publish_with_options_or_headers(subject, None, None, data)
+            .await
     }
 
     /// Publishes a message to `JetStream` with the given options.
-    pub fn publish_with_options(
+    pub async fn publish_with_options(
         &self,
         subject: &str,
         data: impl AsRef<[u8]>,
         options: &PublishOptions,
     ) -> io::Result<PublishAck> {
         self.publish_with_options_or_headers(subject, Some(options), None, data)
+            .await
     }
 
     /// Publishes a `Message` to `JetStream`.
-    pub fn publish_message(&self, message: &Message) -> io::Result<PublishAck> {
+    pub async fn publish_message(&self, message: &Message) -> io::Result<PublishAck> {
         self.publish_with_options_or_headers(
             &message.subject,
             None,
             message.headers.as_ref(),
             &message.data,
         )
+        .await
     }
 
     /// Publishes a `Message` to `JetStream` with the given options.
-    pub fn publish_message_with_options(
+    pub async fn publish_message_with_options(
         &self,
         message: &Message,
         options: &PublishOptions,
@@ -648,10 +659,11 @@ impl JetStream {
             message.headers.as_ref(),
             &message.data,
         )
+        .await
     }
 
     /// Publishes a message to `JetStream` with the given options and/or headers.
-    pub(crate) fn publish_with_options_or_headers(
+    pub(crate) async fn publish_with_options_or_headers(
         &self,
         subject: &str,
         maybe_options: Option<&PublishOptions>,
@@ -713,12 +725,10 @@ impl JetStream {
 
         let maybe_timeout = maybe_options.and_then(|options| options.timeout);
 
-        let res_msg = self.nc.request_with_headers_or_timeout(
-            subject,
-            maybe_headers.as_ref(),
-            maybe_timeout,
-            msg,
-        )?;
+        let res_msg = self
+            .nc
+            .request_with_headers_or_timeout(subject, maybe_headers.as_ref(), maybe_timeout, msg)
+            .await?;
 
         let res: ApiResponse<PublishAck> = serde_json::de::from_slice(&res_msg.data)?;
         match res {
@@ -735,7 +745,7 @@ impl JetStream {
     }
 
     /// Create a `JetStream` stream.
-    pub fn add_stream<S>(&self, stream_config: S) -> io::Result<StreamInfo>
+    pub async fn add_stream<S>(&self, stream_config: S) -> io::Result<StreamInfo>
     where
         StreamConfig: From<S>,
     {
@@ -748,11 +758,11 @@ impl JetStream {
         }
         let subject: String = format!("{}STREAM.CREATE.{}", self.api_prefix(), cfg.name);
         let req = serde_json::ser::to_vec(&cfg)?;
-        self.js_request(&subject, &req)
+        self.js_request(&subject, &req).await
     }
 
     /// Update a `JetStream` stream.
-    pub fn update_stream(&self, cfg: &StreamConfig) -> io::Result<StreamInfo> {
+    pub async fn update_stream(&self, cfg: &StreamConfig) -> io::Result<StreamInfo> {
         if cfg.name.is_empty() {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
@@ -761,7 +771,7 @@ impl JetStream {
         }
         let subject: String = format!("{}STREAM.UPDATE.{}", self.api_prefix(), cfg.name);
         let req = serde_json::ser::to_vec(&cfg)?;
-        self.js_request(&subject, &req)
+        self.js_request(&subject, &req).await
     }
 
     /// List all `JetStream` stream names. If you also want stream information,
@@ -811,7 +821,7 @@ impl JetStream {
     }
 
     /// Query `JetStream` stream information.
-    pub fn stream_info<S: AsRef<str>>(&self, stream: S) -> io::Result<StreamInfo> {
+    pub async fn stream_info<S: AsRef<str>>(&self, stream: S) -> io::Result<StreamInfo> {
         let stream: &str = stream.as_ref();
         if stream.is_empty() {
             return Err(io::Error::new(
@@ -820,11 +830,11 @@ impl JetStream {
             ));
         }
         let subject: String = format!("{}STREAM.INFO.{}", self.api_prefix(), stream);
-        self.js_request(&subject, b"")
+        self.js_request(&subject, b"").await
     }
 
     /// Purge `JetStream` stream messages.
-    pub fn purge_stream<S: AsRef<str>>(&self, stream: S) -> io::Result<PurgeResponse> {
+    pub async fn purge_stream<S: AsRef<str>>(&self, stream: S) -> io::Result<PurgeResponse> {
         let stream: &str = stream.as_ref();
         if stream.is_empty() {
             return Err(io::Error::new(
@@ -833,11 +843,11 @@ impl JetStream {
             ));
         }
         let subject = format!("{}STREAM.PURGE.{}", self.api_prefix(), stream);
-        self.js_request(&subject, b"")
+        self.js_request(&subject, b"").await
     }
 
     /// Delete message in a `JetStream` stream.
-    pub fn delete_message<S: AsRef<str>>(
+    pub async fn delete_message<S: AsRef<str>>(
         &self,
         stream: S,
         sequence_number: u64,
@@ -858,11 +868,12 @@ impl JetStream {
         let subject = format!("{}STREAM.MSG.DELETE.{}", self.api_prefix(), stream);
 
         self.js_request::<DeleteResponse>(&subject, &req)
+            .await
             .map(|dr| dr.success)
     }
 
     /// Delete `JetStream` stream.
-    pub fn delete_stream<S: AsRef<str>>(&self, stream: S) -> io::Result<bool> {
+    pub async fn delete_stream<S: AsRef<str>>(&self, stream: S) -> io::Result<bool> {
         let stream: &str = stream.as_ref();
         if stream.is_empty() {
             return Err(io::Error::new(
@@ -873,6 +884,7 @@ impl JetStream {
 
         let subject = format!("{}STREAM.DELETE.{}", self.api_prefix(), stream);
         self.js_request::<DeleteResponse>(&subject, b"")
+            .await
             .map(|dr| dr.success)
     }
 
@@ -880,12 +892,13 @@ impl JetStream {
     /// `ConsumerInfo` that may have been returned
     /// from the `nats::Connection::list_consumers`
     /// iterator.
-    pub fn from_consumer_info(&self, ci: ConsumerInfo) -> io::Result<Consumer> {
+    pub async fn from_consumer_info(&self, ci: ConsumerInfo) -> io::Result<Consumer> {
         self.existing::<String, ConsumerConfig>(ci.stream_name, ci.config)
+            .await
     }
 
     /// Use an existing `JetStream` `Consumer`
-    pub fn existing<S, C>(&self, stream: S, cfg: C) -> io::Result<Consumer>
+    pub async fn existing<S, C>(&self, stream: S, cfg: C) -> io::Result<Consumer>
     where
         S: AsRef<str>,
         ConsumerConfig: From<C>,
@@ -894,7 +907,7 @@ impl JetStream {
         let cfg = ConsumerConfig::from(cfg);
 
         let push_subscriber = if let Some(ref deliver_subject) = cfg.deliver_subject {
-            Some(self.nc.subscribe(deliver_subject)?)
+            Some(self.nc.subscribe(deliver_subject).await?)
         } else {
             None
         };
@@ -909,7 +922,7 @@ impl JetStream {
     }
 
     /// Create a `JetStream` consumer.
-    pub fn add_consumer<S, C>(&self, stream: S, cfg: C) -> io::Result<Consumer>
+    pub async fn add_consumer<S, C>(&self, stream: S, cfg: C) -> io::Result<Consumer>
     where
         S: AsRef<str>,
         ConsumerConfig: From<C>,
@@ -941,16 +954,16 @@ impl JetStream {
 
         let ser_req = serde_json::ser::to_vec(&req)?;
 
-        let _info: ConsumerInfo = self.js_request(&subject, &ser_req)?;
+        let _info: ConsumerInfo = self.js_request(&subject, &ser_req).await?;
 
-        self.existing::<&str, ConsumerConfig>(stream, config)
+        self.existing::<&str, ConsumerConfig>(stream, config).await
     }
 
     /// Instantiate a `JetStream` `Consumer`. Performs a check to see if the consumer
     /// already exists, and creates it if not. If you want to use an existing
     /// `Consumer` without this check and creation, use the `existing`
     /// method.
-    pub fn create_or_bind<S, C>(&self, stream: S, cfg: C) -> io::Result<Consumer>
+    pub async fn create_or_bind<S, C>(&self, stream: S, cfg: C) -> io::Result<Consumer>
     where
         S: AsRef<str>,
         ConsumerConfig: From<C>,
@@ -960,22 +973,24 @@ impl JetStream {
 
         if let Some(ref durable_name) = cfg.durable_name {
             // attempt to create a durable config if it does not yet exist
-            let consumer_info = self.consumer_info(&stream, durable_name);
+            let consumer_info = self.consumer_info(&stream, durable_name).await;
             if let Err(e) = consumer_info {
                 if e.kind() == std::io::ErrorKind::Other {
-                    self.add_consumer::<&str, &ConsumerConfig>(&stream, &cfg)?;
+                    self.add_consumer::<&str, &ConsumerConfig>(&stream, &cfg)
+                        .await?;
                 }
             }
         } else {
             // ephemeral consumer
-            self.add_consumer::<&str, &ConsumerConfig>(&stream, &cfg)?;
+            self.add_consumer::<&str, &ConsumerConfig>(&stream, &cfg)
+                .await?;
         }
 
-        self.existing::<String, ConsumerConfig>(stream, cfg)
+        self.existing::<String, ConsumerConfig>(stream, cfg).await
     }
 
     /// Delete a `JetStream` consumer.
-    pub fn delete_consumer<S, C>(&self, stream: S, consumer: C) -> io::Result<bool>
+    pub async fn delete_consumer<S, C>(&self, stream: S, consumer: C) -> io::Result<bool>
     where
         S: AsRef<str>,
         C: AsRef<str>,
@@ -1003,11 +1018,12 @@ impl JetStream {
         );
 
         self.js_request::<DeleteResponse>(&subject, b"")
+            .await
             .map(|dr| dr.success)
     }
 
     /// Query `JetStream` consumer information.
-    pub fn consumer_info<S, C>(&self, stream: S, consumer: C) -> io::Result<ConsumerInfo>
+    pub async fn consumer_info<S, C>(&self, stream: S, consumer: C) -> io::Result<ConsumerInfo>
     where
         S: AsRef<str>,
         C: AsRef<str>,
@@ -1021,19 +1037,20 @@ impl JetStream {
         }
         let consumer: &str = consumer.as_ref();
         let subject: String = format!("{}CONSUMER.INFO.{}.{}", self.api_prefix(), stream, consumer);
-        self.js_request(&subject, b"")
+        self.js_request(&subject, b"").await
     }
 
     /// Query `JetStream` account information.
-    pub fn account_info(&self) -> io::Result<AccountInfo> {
+    pub async fn account_info(&self) -> io::Result<AccountInfo> {
         self.js_request(&format!("{}INFO", self.api_prefix()), b"")
+            .await
     }
 
-    fn js_request<Res>(&self, subject: &str, req: &[u8]) -> io::Result<Res>
+    async fn js_request<Res>(&self, subject: &str, req: &[u8]) -> io::Result<Res>
     where
         Res: DeserializeOwned,
     {
-        let res_msg = self.nc.request(subject, req)?;
+        let res_msg = self.nc.request(subject, req).await?;
         let res: ApiResponse<Res> = serde_json::de::from_slice(&res_msg.data)?;
         match res {
             ApiResponse::Ok(stream_info) => Ok(stream_info),
@@ -1097,7 +1114,7 @@ impl Consumer {
     /// before the entire batch is processed, there will be no error
     /// pushed to the returned `Vec`, it will just be shorter than the
     /// specified batch size.
-    pub fn process_batch<R, F: FnMut(&Message) -> io::Result<R>>(
+    pub async fn process_batch<R, F: FnMut(&Message) -> io::Result<R>>(
         &mut self,
         batch_size: usize,
         mut f: F,
@@ -1121,7 +1138,12 @@ impl Consumer {
                 self.cfg.durable_name.as_ref().unwrap()
             );
 
-            let sub = match self.js.nc.request_multi(&subject, batch_size.to_string()) {
+            let sub = match self
+                .js
+                .nc
+                .request_multi(&subject, batch_size.to_string())
+                .await
+            {
                 Ok(sub) => sub,
                 Err(e) => return vec![Err(e)],
             };
@@ -1155,7 +1177,7 @@ impl Consumer {
                 // if our ack policy is `All`, after breaking.
                 break;
             } else if self.cfg.ack_policy == AckPolicy::Explicit {
-                let res = next.ack();
+                let res = next.ack().await;
                 if let Err(e) = res {
                     rets.push(Err(e));
                 }
@@ -1170,7 +1192,7 @@ impl Consumer {
 
         if let Some(last) = last {
             if self.cfg.ack_policy == AckPolicy::All {
-                let res = last.ack();
+                let res = last.ack().await;
                 if let Err(e) = res {
                     rets.push(Err(e));
                 }
@@ -1190,7 +1212,7 @@ impl Consumer {
     /// the `double_ack` method of the argument message. If you require
     /// both the returned `Ok` from the closure and the `Err` from a
     /// failed ack, use `process_batch` instead.
-    pub fn process<R, F: Fn(&Message) -> io::Result<R>>(&mut self, f: F) -> io::Result<R> {
+    pub async fn process<R, F: Fn(&Message) -> io::Result<R>>(&mut self, f: F) -> io::Result<R> {
         let next = if let Some(ps) = &self.push_subscriber {
             ps.next().unwrap()
         } else {
@@ -1209,7 +1231,7 @@ impl Consumer {
                 self.cfg.durable_name.as_ref().unwrap()
             );
 
-            self.js.nc.request(&subject, AckKind::Ack)?
+            self.js.nc.request(&subject, AckKind::Ack).await?
         };
 
         let ret = f(&next)?;
@@ -1230,7 +1252,10 @@ impl Consumer {
     /// the `double_ack` method of the argument message. If you require
     /// both the returned `Ok` from the closure and the `Err` from a
     /// failed ack, use `process_batch` instead.
-    pub fn process_timeout<R, F: Fn(&Message) -> io::Result<R>>(&mut self, f: F) -> io::Result<R> {
+    pub async fn process_timeout<R, F: Fn(&Message) -> io::Result<R>>(
+        &mut self,
+        f: F,
+    ) -> io::Result<R> {
         let next = if let Some(ps) = &self.push_subscriber {
             ps.next_timeout(self.timeout)?
         } else {
@@ -1249,7 +1274,10 @@ impl Consumer {
                 self.cfg.durable_name.as_ref().unwrap()
             );
 
-            self.js.nc.request_timeout(&subject, b"", self.timeout)?
+            self.js
+                .nc
+                .request_timeout(&subject, b"", self.timeout)
+                .await?
         };
 
         let ret = f(&next)?;
@@ -1264,12 +1292,13 @@ impl Consumer {
     /// this can be used to request a single message, and wait forever for a response.
     /// If you require specifying the batch size or using a timeout while consuming the
     /// responses, use the `pull_opt` method below.
-    pub fn pull(&mut self) -> io::Result<Message> {
+    pub async fn pull(&mut self) -> io::Result<Message> {
         let ret_opt = self
             .pull_opt(NextRequest {
                 batch: 1,
                 ..Default::default()
-            })?
+            })
+            .await?
             .next();
 
         if let Some(ret) = ret_opt {
@@ -1286,7 +1315,7 @@ impl Consumer {
     /// this can be used to request a configurable number of messages, as well as specify
     /// how the server will keep track of this batch request over time. See the docs for
     /// `NextRequest` for more information about the options.
-    pub fn pull_opt(&mut self, next_request: NextRequest) -> io::Result<crate::Subscription> {
+    pub async fn pull_opt(&mut self, next_request: NextRequest) -> io::Result<crate::Subscription> {
         if self.cfg.durable_name.is_none() {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
@@ -1311,7 +1340,7 @@ impl Consumer {
         );
 
         let req = serde_json::ser::to_vec(&next_request).unwrap();
-        self.js.nc.request_multi(&subject, &req)
+        self.js.nc.request_multi(&subject, &req).await
     }
 }
 

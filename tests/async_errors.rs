@@ -5,8 +5,8 @@ use crossbeam_channel::bounded;
 mod util;
 pub use util::*;
 
-#[test]
-fn pub_perms() {
+#[tokio::test]
+async fn pub_perms() {
     let s = util::run_server("tests/configs/perms.conf");
 
     let (dtx, drx) = bounded(1);
@@ -18,9 +18,10 @@ fn pub_perms() {
             let _ = dtx.send(true);
         })
         .connect(&s.client_url())
+        .await
         .expect("could not connect");
 
-    nc.publish("foo", "NOT ALLOWED").unwrap();
+    nc.publish("foo", "NOT ALLOWED").await.unwrap();
 
     let r = erx.recv_timeout(Duration::from_millis(100));
     assert!(r.is_ok(), "expected an error callback, got none");
@@ -33,8 +34,8 @@ fn pub_perms() {
     assert!(r.is_err(), "we got disconnected on perm violation");
 }
 
-#[test]
-fn sub_perms() {
+#[tokio::test]
+async fn sub_perms() {
     let s = util::run_server("tests/configs/perms.conf");
 
     let (dtx, drx) = bounded(1);
@@ -46,9 +47,10 @@ fn sub_perms() {
             let _ = dtx.send(true);
         })
         .connect(&s.client_url())
+        .await
         .expect("could not connect");
 
-    let _sub = nc.subscribe("foo").unwrap();
+    let _sub = nc.subscribe("foo").await.unwrap();
 
     let r = erx.recv_timeout(Duration::from_millis(100));
     assert!(r.is_ok(), "expected an error callback, got none");

@@ -14,6 +14,7 @@ categories = ["network-programming", "api-bindings"]
 
 [features]
 fault_injection = []
+jetstream = []
 
 [badges]
 maintenance = { status = "actively-developed" }
@@ -27,28 +28,35 @@ panic = 'abort'
 split-debuginfo = "unpacked"
 
 [dependencies]
+async-trait = "0.1"
 base64 = "0.13.0"
 base64-url = "1.4.10"
 blocking = "1.1.0"
+chrono = { version = "0.4.19", features = ["serde"] }
 crossbeam-channel = "0.5.1"
 fastrand = "1.5.0"
+futures = "0.3"
 itoa = "0.4.7"
 json = "0.12.4"
 log = "0.4.14"
+memchr = "2.4.0"
 nkeys = "0.1.0"
 nuid = "0.3.0"
 once_cell = "1.8.0"
 parking_lot = "0.11.1"
+pin-project = "1.0"
+pin-utils = "0.1"
 regex = { version = "1.5.4", default-features = false, features = ["std", "unicode-perl"] }
-rustls = "0.19.1"
-rustls-native-certs = "0.5.0"
-webpki = "0.21.0"
-serde = { version = "1.0.126", features = ["derive"] }
+rustls-native-certs = "0.6"
+rustls-pemfile = "0.2"
 serde_json = "1.0.64"
 serde_repr = "0.1.7"
-chrono = { version = "0.4.19", features = ["serde"] }
-memchr = "2.4.0"
+serde = { version = "1.0.126", features = ["derive"] }
+tokio-rustls = "0.23"
+tokio-stream = "0.1"
+tokio = { version = "1", features=["full"]}
 url = "2.2.2"
+webpki = "0.21.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.98"

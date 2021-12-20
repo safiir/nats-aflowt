@@ -458,6 +458,7 @@ pub struct PublishAck {
 
 /// The kinds of response used for acknowledging a processed message.
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub enum AckKind {
     /// Acknowledges a message was completely handled.
     Ack,

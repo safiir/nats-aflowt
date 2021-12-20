@@ -8,8 +8,9 @@ struct Person {
     age: u8,
 }
 
-fn main() -> std::io::Result<()> {
-    let nc = nats::connect("demo.nats.io")?;
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let nc = nats::connect("demo.nats.io").await.expect("demo.nats.io");
     let subj = nc.new_inbox();
 
     let p = Person {
@@ -18,8 +19,8 @@ fn main() -> std::io::Result<()> {
         age: 22,
     };
 
-    let sub = nc.subscribe(&subj)?;
-    nc.publish(&subj, serde_json::to_vec(&p)?)?;
+    let sub = nc.subscribe(&subj).await?;
+    nc.publish(&subj, serde_json::to_vec(&p)?).await?;
 
     let mut p2 = sub.iter().map(move |msg| {
         let p: Person = serde_json::from_slice(&msg.data).unwrap();

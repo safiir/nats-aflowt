@@ -13,17 +13,20 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
-use std::io::prelude::*;
-use std::io::{self, BufReader, BufWriter, Error, ErrorKind};
+use std::io::{self, Error, ErrorKind};
 use std::mem;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel as channel;
 use crossbeam_channel::RecvTimeoutError;
-use parking_lot::Mutex;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::{io::BufReader, io::BufWriter, sync::Mutex};
 
 use crate::connector::{Connector, NatsStream};
 use crate::message::Message;
@@ -94,7 +97,7 @@ pub struct Client {
     pub(crate) server_info: Arc<Mutex<ServerInfo>>,
 
     /// Set to `true` if shutdown has been requested.
-    shutdown: Arc<Mutex<bool>>,
+    shutdown: Arc<AtomicBool>,
 
     /// The options that this `Client` was created using.
     pub(crate) options: Arc<Options>,
@@ -102,7 +105,7 @@ pub struct Client {
 
 impl Client {
     /// Creates a new client that will begin connecting in the background.
-    pub(crate) fn connect(url: &str, options: Options) -> io::Result<Client> {
+    pub(crate) async fn connect(url: &str, options: Options) -> io::Result<Client> {
         // A channel for coordinating flushes.
         let (flush_kicker, flush_wanted) = channel::bounded(1);
 
@@ -111,7 +114,7 @@ impl Client {
         let (pong_sender, pong_receiver) = channel::bounded::<()>(1);
 
         // The client state.
-        let client = Client {
+        let _client = Client {
             state: Arc::new(State {
                 write: Mutex::new(WriteState {
                     writer: None,
@@ -127,37 +130,38 @@ impl Client {
                 }),
             }),
             server_info: Arc::new(Mutex::new(ServerInfo::default())),
-            shutdown: Arc::new(Mutex::new(false)),
+            shutdown: Arc::new(AtomicBool::new(false)),
             options: Arc::new(options),
         };
 
-        let options = client.options.clone();
+        let options = _client.options.clone();
 
         // Connector for creating the initial connection and reconnecting when
         // it is broken.
         let connector = Connector::new(url, options.clone())?;
 
-        // Spawn the client thread responsible for:
+        // Spawn the async task responsible for:
         // - Maintaining a connection to the server and reconnecting when it is
         //   broken.
         // - Reading messages from the server and processing them.
         // - Forwarding MSG operations to subscribers.
-        thread::spawn({
-            let client = client.clone();
-            move || {
-                let res = client.run(connector);
+        let client = _client.clone();
+        tokio::spawn(async move {
+            {
+                // TODO(ss): review that this works after conversion to async
+                let res = client.run(connector).await;
                 run_sender.send(res).ok();
 
                 // One final flush before shutting down.
                 // This way we make sure buffered published messages reach the
                 // server.
                 {
-                    let mut write = client.state.write.lock();
+                    let mut write = client.state.write.lock().await;
                     if let Some(writer) = write.writer.as_mut() {
-                        writer.flush().ok();
+                        writer.shutdown().await.ok();
                     }
                 }
-
+                // this is synchronous ...
                 options.close_callback.call();
             }
         });
@@ -171,9 +175,9 @@ impl Client {
         }
 
         // Spawn a thread that periodically flushes buffered messages.
-        thread::spawn({
-            let client = client.clone();
-            move || {
+        let client = _client.clone();
+        tokio::spawn(async move {
+            {
                 // Track last flush/write time.
                 const MIN_FLUSH_BETWEEN: Duration = Duration::from_millis(5);
 
@@ -194,28 +198,26 @@ impl Client {
                             }
 
                             // Flush the writer.
-                            let mut write = client.state.write.lock();
+                            let mut write = client.state.write.lock().await;
                             if let Some(writer) = write.writer.as_mut() {
-                                let res = writer.flush();
-                                last = Instant::now();
                                 // If flushing fails, disconnect.
-                                if res.is_err() {
-                                    // NB see locking protocol for state.write and state.read
-                                    writer.get_ref().shutdown();
+                                if let Err(_) = writer.flush().await {
+                                    last = Instant::now();
+                                    let _ = writer.shutdown().await;
                                     write.writer = None;
-                                    let mut read = client.state.read.lock();
+                                    let mut read = client.state.read.lock().await;
                                     read.pongs.clear();
                                 }
                             }
                             drop(write);
                         }
                         Err(RecvTimeoutError::Timeout) => {
-                            let mut write = client.state.write.lock();
-                            let mut read = client.state.read.lock();
+                            let mut write = client.state.write.lock().await;
+                            let mut read = client.state.read.lock().await;
 
                             if read.pings_out >= MAX_PINGS_OUT {
                                 if let Some(writer) = write.writer.as_mut() {
-                                    writer.get_ref().shutdown();
+                                    writer.get_mut().shutdown().await;
                                 }
                                 write.writer = None;
                                 read.pongs.clear();
@@ -225,11 +227,10 @@ impl Client {
                                 // Send out a PING here.
                                 if let Some(mut writer) = write.writer.as_mut() {
                                     // Ok to ignore errors here.
-                                    proto::encode(&mut writer, ClientOp::Ping).ok();
-                                    let res = writer.flush();
-                                    if res.is_err() {
+                                    let _ = proto::encode(&mut writer, ClientOp::Ping).await;
+                                    if let Err(_) = writer.flush().await {
                                         // NB see locking protocol for state.write and state.read
-                                        writer.get_ref().shutdown();
+                                        writer.shutdown().await.ok();
                                         write.writer = None;
                                         read.pongs.clear();
                                     }
@@ -248,21 +249,21 @@ impl Client {
             }
         });
 
-        Ok(client)
+        Ok(_client)
     }
 
     /// Retrieves server info as received by the most recent connection.
-    pub fn server_info(&self) -> ServerInfo {
-        self.server_info.lock().clone()
+    pub async fn server_info(&self) -> ServerInfo {
+        self.server_info.lock().await.clone()
     }
 
     /// Makes a round trip to the server to ensure buffered messages reach it.
-    pub(crate) fn flush(&self, timeout: Duration) -> io::Result<()> {
+    pub(crate) async fn flush(&self, timeout: Duration) -> io::Result<()> {
         let pong = {
             // Inject random delays when testing.
             inject_delay();
 
-            let mut write = self.state.write.lock();
+            let mut write = self.state.write.lock().await;
 
             // Check if the client is closed.
             self.check_shutdown()?;
@@ -273,18 +274,18 @@ impl Client {
             match write.writer.as_mut() {
                 None => {}
                 Some(mut writer) => {
-                    // TODO(stjepang): We probably want to set the deadline
-                    // rather than the timeout because right now the timeout
-                    // applies to each write syscall individually.
-                    writer.get_ref().set_write_timeout(Some(timeout))?;
-                    proto::encode(&mut writer, ClientOp::Ping)?;
-                    writer.flush()?;
-                    writer.get_ref().set_write_timeout(None)?;
+                    // uses timeout for duration, not per-write
+                    tokio::time::timeout(timeout, async {
+                        if let Ok(()) = proto::encode(&mut writer, ClientOp::Ping).await {
+                            let _ = writer.flush().await;
+                        }
+                    })
+                    .await?;
                 }
             }
 
             // Enqueue an expected PONG.
-            let mut read = self.state.read.lock();
+            let mut read = self.state.read.lock().await;
             read.pongs.push_back(sender);
 
             // NB see locking protocol for state.write and state.read
@@ -302,12 +303,12 @@ impl Client {
     }
 
     /// Closes the client.
-    pub(crate) fn close(&self) {
+    pub(crate) async fn close(&self) {
         // Inject random delays when testing.
         inject_delay();
 
-        let mut write = self.state.write.lock();
-        let mut read = self.state.read.lock();
+        let mut write = self.state.write.lock().await;
+        let mut read = self.state.read.lock().await;
 
         // Initiate shutdown process.
         if self.shutdown() {
@@ -317,7 +318,9 @@ impl Client {
                 // Send an UNSUB message and ignore errors.
                 if let Some(writer) = write.writer.as_mut() {
                     let max_msgs = None;
-                    proto::encode(writer, ClientOp::Unsub { sid, max_msgs }).ok();
+                    proto::encode(writer, ClientOp::Unsub { sid, max_msgs })
+                        .await
+                        .ok();
                     write.flush_kicker.try_send(()).ok();
                 }
             }
@@ -325,7 +328,7 @@ impl Client {
 
             // Flush the writer in case there are buffered messages.
             if let Some(writer) = write.writer.as_mut() {
-                writer.flush().ok();
+                writer.flush().await.ok();
             }
 
             // Wake up all pending flushes.
@@ -340,14 +343,13 @@ impl Client {
     /// Kicks off the shutdown process, but doesn't wait for its completion.
     /// Returns true if this is the first attempt to shut down the system.
     pub(crate) fn shutdown(&self) -> bool {
-        let mut shutdown = self.shutdown.lock();
-        let old = *shutdown;
-        *shutdown = true;
-        !old
+        self.shutdown
+            .compare_exchange(false, true, Ordering::Release, Ordering::Relaxed)
+            .is_ok()
     }
 
     fn check_shutdown(&self) -> io::Result<()> {
-        if *self.shutdown.lock() {
+        if self.shutdown.load(Ordering::Acquire) {
             Err(Error::new(ErrorKind::NotConnected, "the client is closed"))
         } else {
             Ok(())
@@ -355,7 +357,7 @@ impl Client {
     }
 
     /// Subscribes to a subject.
-    pub(crate) fn subscribe(
+    pub(crate) async fn subscribe(
         &self,
         subject: &str,
         queue_group: Option<&str>,
@@ -363,8 +365,8 @@ impl Client {
         // Inject random delays when testing.
         inject_delay();
 
-        let mut write = self.state.write.lock();
-        let mut read = self.state.read.lock();
+        let mut write = self.state.write.lock().await;
+        let mut read = self.state.read.lock().await;
 
         // Check if the client is closed.
         self.check_shutdown()?;
@@ -380,7 +382,7 @@ impl Client {
                 queue_group,
                 sid,
             };
-            proto::encode(writer, op).ok();
+            proto::encode(writer, op).await?;
             write.flush_kicker.try_send(()).ok();
         }
 
@@ -403,12 +405,12 @@ impl Client {
     }
 
     /// Unsubscribes from a subject.
-    pub(crate) fn unsubscribe(&self, sid: u64) -> io::Result<()> {
+    pub(crate) async fn unsubscribe(&self, sid: u64) -> io::Result<()> {
         // Inject random delays when testing.
         inject_delay();
 
-        let mut write = self.state.write.lock();
-        let mut read = self.state.read.lock();
+        let mut write = self.state.write.lock().await;
+        let mut read = self.state.read.lock().await;
 
         // Remove the subscription from the map.
         if read.subscriptions.remove(&sid).is_none() {
@@ -424,7 +426,7 @@ impl Client {
         // Send an UNSUB message.
         if let Some(writer) = write.writer.as_mut() {
             let max_msgs = None;
-            proto::encode(writer, ClientOp::Unsub { sid, max_msgs })?;
+            proto::encode(writer, ClientOp::Unsub { sid, max_msgs }).await?;
             write.flush_kicker.try_send(()).ok();
         }
 
@@ -436,7 +438,7 @@ impl Client {
     }
 
     /// Publishes a message with optional reply subject and headers.
-    pub fn publish(
+    pub async fn publish(
         &self,
         subject: &str,
         reply_to: Option<&str>,
@@ -446,7 +448,7 @@ impl Client {
         // Inject random delays when testing.
         inject_delay();
 
-        let server_info = self.server_info.lock();
+        let server_info = self.server_info.lock().await;
         if headers.is_some() && !server_info.headers {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
@@ -473,29 +475,27 @@ impl Client {
             }
         };
 
-        let mut write = self.state.write.lock();
-
+        let mut write = self.state.write.lock().await;
         let written = write.buffer.written;
-
         match write.writer.as_mut() {
             None => {
                 // If reconnecting, write into the buffer.
-                proto::encode(&mut write.buffer, op)?;
-                write.buffer.flush()?;
+                proto::encode(&mut write.buffer, op).await?;
+                write.buffer.flush().await?;
                 Ok(())
             }
             Some(mut writer) => {
                 assert_eq!(written, 0);
 
                 // If connected, write into the writer.
-                let res = proto::encode(&mut writer, op);
+                let res = proto::encode(&mut writer, op).await;
 
                 // If writing fails, disconnect.
                 if res.is_err() {
                     write.writer = None;
 
                     // NB see locking protocol for state.write and state.read
-                    let mut read = self.state.read.lock();
+                    let mut read = self.state.read.lock().await;
                     read.pongs.clear();
                 }
 
@@ -510,7 +510,7 @@ impl Client {
     ///
     /// This only works when the write buffer has enough space to encode the
     /// whole message.
-    pub fn try_publish(
+    pub async fn try_publish(
         &self,
         subject: &str,
         reply_to: Option<&str>,
@@ -548,13 +548,23 @@ impl Client {
             }
         };
 
-        let mut write = self.state.write.try_lock()?;
+        let mut write = match self.state.write.try_lock() {
+            Ok(w) => w,
+            Err(e) => {
+                return Some(Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("mutex error: {}", e),
+                )))
+            }
+        };
 
         match write.writer.as_mut() {
             None => {
                 // If reconnecting, write into the buffer.
-                let res = proto::encode(&mut write.buffer, op).and_then(|_| write.buffer.flush());
-                Some(res)
+                Some(match proto::encode(&mut write.buffer, op).await {
+                    Ok(()) => write.buffer.flush().await,
+                    Err(e) => Err(e),
+                })
             }
             Some(mut writer) => {
                 // Check if there's enough space in the buffer to encode the
@@ -565,7 +575,7 @@ impl Client {
 
                 // If connected, write into the writer. This is not going to
                 // block because there's enough space in the buffer.
-                let res = proto::encode(&mut writer, op);
+                let res = proto::encode(&mut writer, op).await;
                 write.flush_kicker.try_send(()).ok();
 
                 // If writing fails, disconnect.
@@ -573,7 +583,7 @@ impl Client {
                     write.writer = None;
 
                     // NB see locking protocol for state.write and state.read
-                    let mut read = self.state.read.lock();
+                    let mut read = self.state.read.lock().await;
                     read.pongs.clear();
                 }
                 Some(res)
@@ -582,43 +592,43 @@ impl Client {
     }
 
     /// Runs the loop that connects and reconnects the client.
-    fn run(&self, mut connector: Connector) -> io::Result<()> {
+    async fn run(&self, mut connector: Connector) -> io::Result<()> {
         let mut first_connect = true;
 
         loop {
             // Don't use backoff on first connect.
             let use_backoff = !first_connect;
             // Make a connection to the server.
-            let (server_info, stream) = connector.connect(use_backoff)?;
+            let (server_info, stream) = connector.connect(use_backoff).await?;
             self.process_info(&server_info, &connector);
 
             let reader = BufReader::with_capacity(BUF_CAPACITY, stream.clone());
             let writer = BufWriter::with_capacity(BUF_CAPACITY, stream);
 
             // Set up the new connection for this client.
-            if self.reconnect(server_info, writer).is_ok() {
+            if self.reconnect(server_info, writer).await.is_ok() {
                 // Connected! Now dispatch MSG operations.
                 if !first_connect {
                     connector.get_options().reconnect_callback.call();
                 }
-                if self.dispatch(reader, &mut connector).is_ok() {
+                if self.dispatch(reader, &mut connector).await.is_ok() {
                     // If the client stopped gracefully, return.
                     return Ok(());
                 } else {
                     connector.get_options().disconnect_callback.call();
-                    self.state.write.lock().writer = None;
+                    self.state.write.lock().await.writer = None;
                 }
             }
 
             // Clear our pings_out.
-            let mut read = self.state.read.lock();
+            let mut read = self.state.read.lock().await;
             read.pings_out = 0;
             drop(read);
 
             // Inject random delays when testing.
             inject_delay();
 
-            // Check if the client is closed.
+            // Quit if the client is closed.
             if self.check_shutdown().is_err() {
                 return Ok(());
             }
@@ -627,7 +637,7 @@ impl Client {
     }
 
     /// Puts the client back into connected state with the given writer.
-    fn reconnect(
+    async fn reconnect(
         &self,
         server_info: ServerInfo,
         mut writer: BufWriter<NatsStream>,
@@ -638,8 +648,8 @@ impl Client {
         // Check if the client is closed.
         self.check_shutdown()?;
 
-        let mut write = self.state.write.lock();
-        let mut read = self.state.read.lock();
+        let mut write = self.state.write.lock().await;
+        let mut read = self.state.read.lock().await;
 
         // Drop the current writer, if there is one.
         write.writer = None;
@@ -657,7 +667,8 @@ impl Client {
                     queue_group: subscription.queue_group.as_deref(),
                     sid: *sid,
                 },
-            )?;
+            )
+            .await?;
         }
 
         // Take out expected PONGs.
@@ -667,11 +678,11 @@ impl Client {
         let buffered = write.buffer.clear();
 
         // Write buffered PUB operations into the new writer.
-        writer.write_all(buffered)?;
-        writer.flush()?;
+        writer.write_all(buffered).await?;
+        writer.flush().await?;
 
         // All good, continue with this connection.
-        *self.server_info.lock() = server_info;
+        *self.server_info.lock().await = server_info;
         write.writer = Some(writer);
 
         // Complete PONGs because the connection is healthy.
@@ -694,15 +705,19 @@ impl Client {
     }
 
     /// Updates our last activity from the server.
-    fn update_activity(&self) {
-        let mut read = self.state.read.lock();
+    async fn update_activity(&self) {
+        let mut read = self.state.read.lock().await;
         read.last_active = Instant::now();
     }
 
     /// Reads messages from the server and dispatches them to subscribers.
-    fn dispatch(&self, mut reader: impl BufRead, connector: &mut Connector) -> io::Result<()> {
+    async fn dispatch(
+        &self,
+        mut reader: impl tokio::io::AsyncBufRead + std::marker::Unpin,
+        connector: &mut Connector,
+    ) -> io::Result<()> {
         // Handle operations received from the server.
-        while let Some(op) = proto::decode(&mut reader)? {
+        while let Some(op) = proto::decode(&mut reader).await? {
             // Inject random delays when testing.
             inject_delay();
 
@@ -711,7 +726,7 @@ impl Client {
             }
 
             // Track activity.
-            self.update_activity();
+            self.update_activity().await;
 
             match op {
                 ServerOp::Info(server_info) => {
@@ -719,16 +734,16 @@ impl Client {
                         connector.add_url(url).ok();
                     }
                     self.process_info(&server_info, connector);
-                    *self.server_info.lock() = server_info;
+                    *self.server_info.lock().await = server_info;
                 }
 
                 ServerOp::Ping => {
                     // Respond with a PONG if connected.
-                    let mut write = self.state.write.lock();
-                    let read = self.state.read.lock();
+                    let mut write = self.state.write.lock().await;
+                    let read = self.state.read.lock().await;
 
                     if let Some(w) = write.writer.as_mut() {
-                        proto::encode(w, ClientOp::Pong)?;
+                        proto::encode(w, ClientOp::Pong).await?;
                         write.flush_kicker.try_send(()).ok();
                     }
 
@@ -741,8 +756,8 @@ impl Client {
                     // If a PONG is received while disconnected, it came from a
                     // connection that isn't alive anymore and therefore doesn't
                     // correspond to the next expected PONG.
-                    let write = self.state.write.lock();
-                    let mut read = self.state.read.lock();
+                    let write = self.state.write.lock().await;
+                    let mut read = self.state.read.lock().await;
 
                     // Clear any outstanding pings.
                     read.pings_out = 0;
@@ -766,7 +781,7 @@ impl Client {
                     reply_to,
                     payload,
                 } => {
-                    let read = self.state.read.lock();
+                    let read = self.state.read.lock().await;
 
                     // Send the message to matching subscription.
                     if let Some(subscription) = read.subscriptions.get(&sid) {
@@ -792,7 +807,7 @@ impl Client {
                     reply_to,
                     payload,
                 } => {
-                    let read = self.state.read.lock();
+                    let read = self.state.read.lock().await;
                     // Send the message to matching subscription.
                     if let Some(subscription) = read.subscriptions.get(&sid) {
                         let msg = Message {
@@ -814,7 +829,8 @@ impl Client {
                     connector
                         .get_options()
                         .error_callback
-                        .call(self, Error::new(ErrorKind::Other, msg));
+                        .call(self, Error::new(ErrorKind::Other, msg))
+                        .await;
                 }
 
                 ServerOp::Unknown(line) => {
@@ -875,30 +891,36 @@ impl Buffer {
     }
 }
 
-impl Write for Buffer {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+impl AsyncWrite for Buffer {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, Error>> {
         let n = buf.len();
-
         // Check if `buf` will fit into this `Buffer`.
         if self.bytes.len() - self.written < n {
             // Fill the buffer to prevent subsequent smaller writes.
             self.written = self.bytes.len();
-
-            Err(Error::new(
+            Poll::Ready(Err(Error::new(
                 ErrorKind::Other,
                 "the disconnect buffer is full",
-            ))
+            )))
         } else {
             // Append `buf` into the buffer.
             let range = self.written..self.written + n;
             self.bytes[range].copy_from_slice(&buf[..n]);
             self.written += n;
-            Ok(n)
+            Poll::Ready(Ok(n))
         }
     }
 
-    fn flush(&mut self) -> io::Result<()> {
+    fn poll_flush(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
         self.flushed = self.written;
-        Ok(())
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        Poll::Ready(Ok(()))
     }
 }

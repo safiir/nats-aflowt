@@ -36,7 +36,8 @@ enum Command {
     Reply { subject: String, resp: String },
 }
 
-fn main() -> CliResult {
+#[tokio::main]
+async fn main() -> CliResult {
     let args = Cli::from_args();
 
     let opts = if let Some(creds_path) = args.creds {
@@ -51,15 +52,16 @@ fn main() -> CliResult {
         .with_name("nats-box rust example")
         .disconnect_callback(|| println!("Disconnected"))
         .reconnect_callback(|| println!("Reconnected"))
-        .connect(&args.server)?;
+        .connect(&args.server)
+        .await?;
 
     match args.cmd {
         Command::Pub { subject, msg } => {
-            nc.publish(&subject, &msg)?;
+            nc.publish(&subject, &msg).await?;
             println!("Published to '{}': '{}'", subject, msg);
         }
         Command::Sub { subject } => {
-            let sub = nc.subscribe(&subject)?;
+            let sub = nc.subscribe(&subject).await?;
             println!("Listening on '{}'", subject);
             for msg in sub.messages() {
                 println!("Received a {:?}", msg);
@@ -67,15 +69,15 @@ fn main() -> CliResult {
         }
         Command::Request { subject, msg } => {
             println!("Waiting on response for '{}'", subject);
-            let resp = nc.request(&subject, &msg)?;
+            let resp = nc.request(&subject, &msg).await?;
             println!("Response is {:?}", resp);
         }
         Command::Reply { subject, resp } => {
-            let sub = nc.queue_subscribe(&subject, "rust-box")?;
+            let sub = nc.queue_subscribe(&subject, "rust-box").await?;
             println!("Listening for requests on '{}'", subject);
             for msg in sub.messages() {
                 println!("Received a request {:?}", msg);
-                msg.respond(&resp)?;
+                msg.respond(&resp).await?;
             }
         }
     }

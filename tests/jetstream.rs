@@ -1,18 +1,19 @@
 use std::{collections::HashSet, io, iter::FromIterator, time::Duration};
+use tokio_stream::StreamExt;
 
 mod util;
 use nats::jetstream;
 use nats::jetstream::*;
 pub use util::*;
 
-#[test]
+#[tokio::test]
 #[ignore]
-fn jetstream_not_enabled() {
+async fn jetstream_not_enabled() {
     let s = util::run_basic_server();
-    let nc = nats::connect(&s.client_url()).unwrap();
+    let nc = nats::connect(&s.client_url()).await.unwrap();
     let js = nats::jetstream::new(nc);
 
-    let err = js.account_info().unwrap_err();
+    let err = js.account_info().await.unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::Other);
 
     let err = err
@@ -25,13 +26,13 @@ fn jetstream_not_enabled() {
     assert_eq!(err.error_code(), jetstream::ErrorCode::NotEnabled);
 }
 
-#[test]
-fn jetstream_account_not_enabled() {
+#[tokio::test]
+async fn jetstream_account_not_enabled() {
     let s = util::run_server("tests/configs/jetstream_account_not_enabled.conf");
-    let nc = nats::connect(&s.client_url()).unwrap();
+    let nc = nats::connect(&s.client_url()).await.unwrap();
     let js = nats::jetstream::new(nc);
 
-    let err = js.account_info().unwrap_err();
+    let err = js.account_info().await.unwrap_err();
     println!("{:?}", err);
     assert_eq!(err.kind(), io::ErrorKind::Other);
 
@@ -45,9 +46,9 @@ fn jetstream_account_not_enabled() {
     assert_eq!(err.error_code(), jetstream::ErrorCode::NotEnabledForAccount);
 }
 
-#[test]
-fn jetstream_publish() {
-    let (_s, nc, js) = run_basic_jetstream();
+#[tokio::test]
+async fn jetstream_publish() {
+    let (_s, nc, js) = run_basic_jetstream().await;
 
     // Create the stream using our client API.
     js.add_stream(StreamConfig {
@@ -59,18 +60,19 @@ fn jetstream_publish() {
         ]),
         ..Default::default()
     })
+    .await
     .unwrap();
 
     // Lookup the stream for testing.
-    js.stream_info("TEST").unwrap();
+    js.stream_info("TEST").await.unwrap();
 
     let msg = b"Hello JS";
 
     // Basic publish like NATS core.
-    let ack = js.publish("foo", &msg).unwrap();
+    let ack = js.publish("foo", &msg).await.unwrap();
     assert_eq!(ack.stream, "TEST");
     assert_eq!(ack.sequence, 1);
-    assert_eq!(js.stream_info("TEST").unwrap().state.messages, 1);
+    assert_eq!(js.stream_info("TEST").await.unwrap().state.messages, 1);
 
     // Test stream expectation.
     let err = js
@@ -82,6 +84,7 @@ fn jetstream_publish() {
                 ..Default::default()
             },
         )
+        .await
         .unwrap_err();
 
     assert_eq!(err.kind(), io::ErrorKind::Other);
@@ -105,6 +108,7 @@ fn jetstream_publish() {
                 ..Default::default()
             },
         )
+        .await
         .unwrap_err();
 
     assert_eq!(err.kind(), io::ErrorKind::Other);
@@ -122,7 +126,7 @@ fn jetstream_publish() {
     );
 
     // Messages should have been rejected
-    assert_eq!(js.stream_info("TEST").unwrap().state.messages, 1);
+    assert_eq!(js.stream_info("TEST").await.unwrap().state.messages, 1);
 
     // Send in a stream with a message id
     let ack = js
@@ -134,11 +138,12 @@ fn jetstream_publish() {
                 ..Default::default()
             },
         )
+        .await
         .unwrap();
 
     assert_eq!(ack.stream, "TEST");
     assert_eq!(ack.sequence, 2);
-    assert_eq!(js.stream_info("TEST").unwrap().state.messages, 2);
+    assert_eq!(js.stream_info("TEST").await.unwrap().state.messages, 2);
 
     // Send in the same message with same message id.
     let ack = js
@@ -150,12 +155,13 @@ fn jetstream_publish() {
                 ..Default::default()
             },
         )
+        .await
         .unwrap();
 
     assert_eq!(ack.stream, "TEST");
     assert_eq!(ack.duplicate, true);
     assert_eq!(ack.sequence, 2);
-    assert_eq!(js.stream_info("TEST").unwrap().state.messages, 2);
+    assert_eq!(js.stream_info("TEST").await.unwrap().state.messages, 2);
 
     // Now try to send one in with the wrong last msgId.
     let err = js
@@ -167,6 +173,7 @@ fn jetstream_publish() {
                 ..Default::default()
             },
         )
+        .await
         .unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::Other);
 
@@ -178,7 +185,7 @@ fn jetstream_publish() {
         .to_owned();
 
     assert_eq!(err.error_code(), jetstream::ErrorCode::StreamWrongLastMsgId);
-    assert_eq!(js.stream_info("TEST").unwrap().state.messages, 2);
+    assert_eq!(js.stream_info("TEST").await.unwrap().state.messages, 2);
 
     // Make sure expected sequence works.
     let err = js
@@ -190,6 +197,7 @@ fn jetstream_publish() {
                 ..Default::default()
             },
         )
+        .await
         .unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::Other);
 
@@ -204,7 +212,7 @@ fn jetstream_publish() {
         err.error_code(),
         jetstream::ErrorCode::StreamWrongLastSequence
     );
-    assert_eq!(js.stream_info("TEST").unwrap().state.messages, 2);
+    assert_eq!(js.stream_info("TEST").await.unwrap().state.messages, 2);
 
     let ack = js
         .publish_with_options(
@@ -215,15 +223,16 @@ fn jetstream_publish() {
                 ..Default::default()
             },
         )
+        .await
         .unwrap();
 
     assert_eq!(ack.stream, "TEST");
     assert_eq!(ack.sequence, 3);
-    assert_eq!(js.stream_info("TEST").unwrap().state.messages, 3);
+    assert_eq!(js.stream_info("TEST").await.unwrap().state.messages, 3);
 
     // Test expected last subject sequence.
     // Just make sure that we set the header.
-    let sub = nc.subscribe("test").unwrap();
+    let sub = nc.subscribe("test").await.unwrap();
 
     js.publish_with_options(
         "test",
@@ -233,6 +242,7 @@ fn jetstream_publish() {
             ..Default::default()
         },
     )
+    .await
     .ok();
 
     let msg = sub.next_timeout(Duration::from_secs(1)).unwrap();
@@ -246,55 +256,58 @@ fn jetstream_publish() {
     );
 }
 
-#[test]
-fn jetstream_create_stream_and_consumer() -> io::Result<()> {
-    let (_s, _nc, js) = run_basic_jetstream();
-    js.add_stream("stream1")?;
-    js.add_consumer("stream1", "consumer1")?;
+#[tokio::test]
+async fn jetstream_create_stream_and_consumer() -> io::Result<()> {
+    let (_s, _nc, js) = run_basic_jetstream().await;
+    js.add_stream("stream1").await?;
+    js.add_consumer("stream1", "consumer1").await?;
     Ok(())
 }
 
-#[test]
-fn jetstream_queue_process() -> io::Result<()> {
-    let (_s, nc, js) = run_basic_jetstream();
+#[tokio::test]
+async fn jetstream_queue_process() -> io::Result<()> {
+    let (_s, nc, js) = run_basic_jetstream().await;
 
-    let _ = js.delete_stream("qtest1");
+    let _ = js.delete_stream("qtest1").await;
 
     js.add_stream(StreamConfig {
         name: "qtest1".to_string(),
         retention: RetentionPolicy::WorkQueue,
         storage: StorageType::File,
         ..Default::default()
-    })?;
+    })
+    .await?;
 
-    let mut consumer1 = js.add_consumer(
-        "qtest1",
-        ConsumerConfig {
-            max_deliver: 5,
-            durable_name: Some("consumer1".to_string()),
-            ack_policy: AckPolicy::Explicit,
-            replay_policy: ReplayPolicy::Instant,
-            deliver_policy: DeliverPolicy::All,
-            ack_wait: 30 * 1_000_000_000,
-            deliver_subject: None,
-            ..Default::default()
-        },
-    )?;
+    let mut consumer1 = js
+        .add_consumer(
+            "qtest1",
+            ConsumerConfig {
+                max_deliver: 5,
+                durable_name: Some("consumer1".to_string()),
+                ack_policy: AckPolicy::Explicit,
+                replay_policy: ReplayPolicy::Instant,
+                deliver_policy: DeliverPolicy::All,
+                ack_wait: 30 * 1_000_000_000,
+                deliver_subject: None,
+                ..Default::default()
+            },
+        )
+        .await?;
 
     for i in 1..=1000 {
-        nc.publish("qtest1", format!("{}", i))?;
+        nc.publish("qtest1", format!("{}", i)).await?;
     }
 
     for _ in 1..=1000 {
-        consumer1.process(|_msg| Ok(()))?;
+        consumer1.process(|_msg| Ok(())).await?;
     }
 
     Ok(())
 }
 
-#[test]
-fn jetstream_basics() -> io::Result<()> {
-    let (_s, nc, js) = run_basic_jetstream();
+#[tokio::test]
+async fn jetstream_basics() -> io::Result<()> {
+    let (_s, nc, js) = run_basic_jetstream().await;
 
     let _ = js.delete_stream("test1");
     let _ = js.delete_stream("test2");
@@ -303,11 +316,12 @@ fn jetstream_basics() -> io::Result<()> {
         name: "test1".to_string(),
         retention: RetentionPolicy::WorkQueue,
         ..Default::default()
-    })?;
+    })
+    .await?;
 
-    js.add_stream("test2")?;
-    js.stream_info("test2")?;
-    js.add_consumer("test2", "consumer1")?;
+    js.add_stream("test2").await?;
+    js.stream_info("test2").await?;
+    js.add_consumer("test2", "consumer1").await?;
 
     let consumer2_cfg = ConsumerConfig {
         durable_name: Some("consumer2".to_string()),
@@ -315,22 +329,22 @@ fn jetstream_basics() -> io::Result<()> {
         deliver_subject: Some("consumer2_ds".to_string()),
         ..Default::default()
     };
-    js.add_consumer("test2", &consumer2_cfg)?;
-    js.consumer_info("test2", "consumer1")?;
+    js.add_consumer("test2", &consumer2_cfg).await?;
+    js.consumer_info("test2", "consumer1").await?;
 
     for i in 1..=1000 {
-        nc.publish("test2", format!("{}", i))?;
+        nc.publish("test2", format!("{}", i)).await?;
     }
 
-    assert_eq!(js.stream_info("test2")?.state.messages, 1000);
+    assert_eq!(js.stream_info("test2").await?.state.messages, 1000);
 
-    let mut consumer1 = js.existing("test2", "consumer1")?;
+    let mut consumer1 = js.existing("test2", "consumer1").await?;
 
     for _ in 1..=1000 {
-        consumer1.process(|_msg| Ok(()))?;
+        consumer1.process(|_msg| Ok(())).await?;
     }
 
-    let mut consumer2 = js.existing("test2", consumer2_cfg)?;
+    let mut consumer2 = js.existing("test2", consumer2_cfg).await?;
 
     let mut count = 0;
     while count != 1000 {
@@ -339,6 +353,7 @@ fn jetstream_basics() -> io::Result<()> {
                 count += 1;
                 Ok(())
             })
+            .await
             .into_iter()
             .collect::<std::io::Result<Vec<()>>>()?;
     }
@@ -346,63 +361,73 @@ fn jetstream_basics() -> io::Result<()> {
 
     // sequence numbers start with 1
     for i in 1..=500 {
-        js.delete_message("test2", i)?;
+        js.delete_message("test2", i).await?;
     }
 
-    assert_eq!(js.stream_info("test2")?.state.messages, 500);
+    assert_eq!(js.stream_info("test2").await?.state.messages, 500);
 
-    js.add_consumer("test2", "consumer3")?;
+    js.add_consumer("test2", "consumer3").await?;
 
-    js.existing("test2", "consumer3")?;
+    js.existing("test2", "consumer3").await?;
 
     // cleanup
-    let streams: io::Result<Vec<StreamInfo>> = js.list_streams().collect();
+    let streams: io::Result<Vec<StreamInfo>> = js.list_streams().collect().await;
 
-    for stream in streams? {
-        let consumers: io::Result<Vec<ConsumerInfo>> =
-            js.list_consumers(&stream.config.name)?.collect();
-
-        for consumer in consumers? {
-            js.delete_consumer(&stream.config.name, &consumer.name)?;
+    for stream in streams?.iter() {
+        let consumers: PagedIterator<ConsumerInfo> = js.list_consumers(&stream.config.name)?;
+        //let consumers: Vec<ConsumerInfo> = consumers.collect();
+        for consumer in consumers
+            .collect::<Vec<Result<ConsumerInfo, io::Error>>>()
+            .await
+        {
+            if let Ok(consumer) = consumer {
+                js.delete_consumer(&stream.config.name, &consumer.name)
+                    .await?;
+            }
         }
 
-        js.purge_stream(&stream.config.name)?;
+        js.purge_stream(&stream.config.name).await?;
 
-        assert_eq!(js.stream_info(&stream.config.name)?.state.messages, 0);
+        assert_eq!(js.stream_info(&stream.config.name).await?.state.messages, 0);
 
-        js.delete_stream(&stream.config.name)?;
+        js.delete_stream(&stream.config.name).await?;
     }
 
     Ok(())
 }
 
-#[test]
-fn jetstream_libdoc_test() {
-    let (_s, nc, js) = run_basic_jetstream();
+#[tokio::test]
+async fn jetstream_libdoc_test() {
+    let (_s, nc, js) = run_basic_jetstream().await;
 
-    js.add_stream("my_stream").unwrap();
-    nc.publish("my_stream", "1").unwrap();
-    nc.publish("my_stream", "2").unwrap();
-    nc.publish("my_stream", "3").unwrap();
-    nc.publish("my_stream", "4").unwrap();
+    js.add_stream("my_stream").await.unwrap();
+    nc.publish("my_stream", "1").await.unwrap();
+    nc.publish("my_stream", "2").await.unwrap();
+    nc.publish("my_stream", "3").await.unwrap();
+    nc.publish("my_stream", "4").await.unwrap();
 
     let mut consumer = js
         .create_or_bind("my_stream", "existing_or_created_consumer")
+        .await
         .unwrap();
 
     // set this very high for CI
     consumer.timeout = std::time::Duration::from_millis(1500);
 
-    consumer.process(|msg| Ok(msg.data.len())).unwrap();
+    consumer.process(|msg| Ok(msg.data.len())).await.unwrap();
 
-    consumer.process_timeout(|msg| Ok(msg.data.len())).unwrap();
+    consumer
+        .process_timeout(|msg| Ok(msg.data.len()))
+        .await
+        .unwrap();
 
-    let msg = consumer.pull().unwrap();
-    msg.ack().unwrap();
+    let msg = consumer.pull().await.unwrap();
+    msg.ack().await.unwrap();
 
     let batch_size = 128;
-    let results: Vec<std::io::Result<usize>> =
-        consumer.process_batch(batch_size, |msg| Ok(msg.data.len()));
+    let results: Vec<std::io::Result<usize>> = consumer
+        .process_batch(batch_size, |msg| Ok(msg.data.len()))
+        .await;
     let flipped: std::io::Result<Vec<usize>> = results.into_iter().collect();
     let _sizes: Vec<usize> = flipped.unwrap();
 }

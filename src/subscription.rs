@@ -38,7 +38,11 @@ struct Inner {
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        self.client.unsubscribe(self.sid).ok();
+        let client = self.client.clone();
+        let sid = self.sid;
+        tokio::spawn(async move {
+            client.unsubscribe(sid).await.ok();
+        });
     }
 }
 
@@ -269,8 +273,8 @@ impl Subscription {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn unsubscribe(self) -> io::Result<()> {
-        self.drain()?;
+    pub async fn unsubscribe(self) -> io::Result<()> {
+        self.drain().await?;
         // Discard all queued messages.
         while self.0.messages.try_recv().is_ok() {}
         Ok(())
@@ -290,8 +294,8 @@ impl Subscription {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn close(self) -> io::Result<()> {
-        self.unsubscribe()
+    pub async fn close(self) -> io::Result<()> {
+        self.unsubscribe().await
     }
 
     /// Send an unsubscription then flush the connection,
@@ -332,9 +336,9 @@ impl Subscription {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn drain(&self) -> io::Result<()> {
-        self.0.client.flush(crate::DEFAULT_FLUSH_TIMEOUT)?;
-        self.0.client.unsubscribe(self.0.sid)?;
+    pub async fn drain(&self) -> io::Result<()> {
+        self.0.client.flush(crate::DEFAULT_FLUSH_TIMEOUT).await?;
+        self.0.client.unsubscribe(self.0.sid).await?;
         Ok(())
     }
 }
@@ -377,8 +381,8 @@ impl Handler {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn unsubscribe(self) -> io::Result<()> {
-        self.sub.drain()
+    pub async fn unsubscribe(self) -> io::Result<()> {
+        self.sub.drain().await
     }
 }
 

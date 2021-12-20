@@ -48,9 +48,9 @@ fn main() -> std::io::Result<()> {
         let args = Args::from_args();
 
         let opts = if let Some(creds_path) = args.creds {
-            nats::asynk::Options::with_credentials(creds_path)
+            nats::Options::with_credentials(creds_path)
         } else {
-            nats::asynk::Options::new()
+            nats::Options::new()
         };
 
         let nc = opts
@@ -96,7 +96,7 @@ fn main() -> std::io::Result<()> {
                 smol::block_on(async {
                     let s = nc.subscribe(&subject).await.unwrap();
                     for _ in 0..messages {
-                        s.next().await.unwrap();
+                        s.next().unwrap();
                     }
                 })
             }));

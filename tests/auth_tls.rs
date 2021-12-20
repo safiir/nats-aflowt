@@ -4,11 +4,11 @@ use std::path::PathBuf;
 mod util;
 pub use util::*;
 
-#[test]
-fn basic_tls() -> io::Result<()> {
+#[tokio::test]
+async fn basic_tls() -> io::Result<()> {
     let s = util::run_server("tests/configs/tls.conf");
 
-    assert!(nats::connect("nats://127.0.0.1").is_err());
+    assert!(nats::connect("nats://127.0.0.1").await.is_err());
 
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
@@ -18,7 +18,8 @@ fn basic_tls() -> io::Result<()> {
             path.join("tests/configs/certs/client-cert.pem"),
             path.join("tests/configs/certs/client-key.pem"),
         )
-        .connect(&s.client_url())?;
+        .connect(&s.client_url())
+        .await?;
 
     nats::Options::with_user_pass("derek", "porkchop")
         .add_root_certificate(path.join("tests/configs/certs/rootCA.pem"))
@@ -26,7 +27,8 @@ fn basic_tls() -> io::Result<()> {
             path.join("tests/configs/certs/client-cert.pem"),
             path.join("tests/configs/certs/client-key.pem"),
         )
-        .connect(&s.client_url())?;
+        .connect(&s.client_url())
+        .await?;
 
     Ok(())
 }

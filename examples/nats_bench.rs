@@ -1,7 +1,6 @@
 use std::{
     num::NonZeroUsize,
     sync::{Arc, Barrier},
-    thread,
     time::Instant,
 };
 
@@ -14,7 +13,7 @@ lazy_static::lazy_static! {
 }
 
 /// Simple NATS bench tool
-#[derive(Debug, StructOpt)]
+#[derive(Clone, Debug, StructOpt)]
 struct Args {
     /// The nats server URLs (separated by comma) (default
     /// "nats://127.0.0.1:4222")
@@ -49,22 +48,26 @@ struct Args {
     subject: String,
 }
 
-fn main() -> std::io::Result<()> {
-    let args = Args::from_args();
+async fn mk_connect(args: Args) -> nats::Connection {
     let tls = args.tls;
     let url = args.url;
     let creds = args.creds;
-    let connect = || {
-        let opts = if let Some(creds_path) = creds.clone() {
-            nats::Options::with_credentials(creds_path)
-        } else {
-            nats::Options::new()
-        };
-        opts.with_name("nats_bench rust client")
-            .tls_required(tls)
-            .connect(&url)
-            .expect("failed to connect to NATS server")
+
+    let opts = if let Some(creds_path) = creds.clone() {
+        nats::Options::with_credentials(creds_path)
+    } else {
+        nats::Options::new()
     };
+    opts.with_name("nats_bench rust client")
+        .tls_required(tls)
+        .connect(&url)
+        .await
+        .expect("failed to connect to NATS server")
+}
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let args = Args::from_args();
 
     let messages = if args.number_of_messages.get() % args.publishers.get() != 0 {
         let bumped_idx = (args.number_of_messages.get() / args.publishers.get()) + 1;
@@ -82,14 +85,14 @@ fn main() -> std::io::Result<()> {
     let pubs = args.publishers.get();
     for _ in 0..pubs {
         let barrier = barrier.clone();
-        let nc = connect();
+        let nc = mk_connect(args.clone()).await;
         let subject = args.subject.clone();
-        threads.push(thread::spawn(move || {
+        threads.push(tokio::spawn(async move {
             let msg: String = (0..message_size).map(|_| 'a').collect();
             barrier.wait();
             for _ in 0..messages / pubs {
                 let before = Instant::now();
-                nc.publish(&subject, &msg).unwrap();
+                nc.publish(&subject, &msg).await.unwrap();
                 HISTOGRAM.measure(before.elapsed().as_nanos() as f64);
             }
         }));
@@ -98,9 +101,9 @@ fn main() -> std::io::Result<()> {
     for _ in 0..args.subscribers {
         let barrier = barrier.clone();
         let subject = args.subject.clone();
-        let nc = connect();
-        threads.push(thread::spawn(move || {
-            let s = nc.subscribe(&subject).unwrap();
+        let nc = mk_connect(args.clone()).await;
+        threads.push(tokio::spawn(async move {
+            let s = nc.subscribe(&subject).await.unwrap();
             barrier.wait();
             for _ in 0..messages {
                 s.next().unwrap();
@@ -121,7 +124,7 @@ fn main() -> std::io::Result<()> {
     let start = Instant::now();
 
     for thread in threads.into_iter() {
-        thread.join().unwrap();
+        thread.await.unwrap();
     }
 
     let end = start.elapsed();

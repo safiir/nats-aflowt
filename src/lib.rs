@@ -115,7 +115,9 @@
 //! # Ok(()) }
 //! ```
 
-#![cfg_attr(test, deny(warnings))]
+// TODO(ss): removed this temporarily
+//#![cfg_attr(test, deny(warnings))]
+// unused_qualifications
 #![cfg_attr(
     feature = "fault_injection",
     deny(
@@ -128,7 +130,6 @@
         trivial_numeric_casts,
         unsafe_code,
         unused,
-        unused_qualifications
     )
 )]
 #![cfg_attr(feature = "fault_injection", deny(
@@ -192,8 +193,7 @@
 )]
 
 /// Async-enabled NATS client.
-pub mod asynk;
-
+//pub mod _asynk;
 mod auth_utils;
 mod client;
 mod connect;
@@ -209,6 +209,7 @@ mod subscription;
 pub mod header;
 
 /// `JetStream` stream management and consumers.
+//#[cfg(feature = "jetstream")]
 pub mod jetstream;
 
 #[cfg(feature = "fault_injection")]
@@ -239,15 +240,17 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "jetstream")]
 pub use jetstream::JetStreamOptions;
 pub use message::Message;
 pub use options::Options;
 pub use subscription::Subscription;
 
-/// A re-export of the `rustls` crate used in this crate,
+/// A re-export of the `tokio_rustls` crate used in this crate,
 /// for use in cases where manual client configurations
 /// must be provided using `Options::tls_client_config`.
-pub use rustls;
+pub use tokio_rustls;
+pub use tokio_rustls::rustls;
 
 #[doc(hidden)]
 pub use connect::ConnectInfo;
@@ -352,15 +355,18 @@ impl Drop for Inner {
 /// # Ok(())
 /// # }
 /// ```
-pub fn connect(nats_url: &str) -> io::Result<Connection> {
-    Options::new().connect(nats_url)
+pub async fn connect(nats_url: &str) -> io::Result<Connection> {
+    Options::new().connect(nats_url).await
 }
 
 impl Connection {
     /// Connects on a URL with the given options.
-    pub(crate) fn connect_with_options(url: &str, options: Options) -> io::Result<Connection> {
-        let client = Client::connect(url, options)?;
-        client.flush(DEFAULT_FLUSH_TIMEOUT)?;
+    pub(crate) async fn connect_with_options(
+        url: &str,
+        options: Options,
+    ) -> io::Result<Connection> {
+        let client = Client::connect(url, options).await?;
+        client.flush(DEFAULT_FLUSH_TIMEOUT).await?;
         Ok(Connection(Arc::new(Inner { client })))
     }
 
@@ -374,8 +380,8 @@ impl Connection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn subscribe(&self, subject: &str) -> io::Result<Subscription> {
-        self.do_subscribe(subject, None)
+    pub async fn subscribe(&self, subject: &str) -> io::Result<Subscription> {
+        self.do_subscribe(subject, None).await
     }
 
     /// Create a queue subscription for the given NATS connection.
@@ -388,8 +394,8 @@ impl Connection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn queue_subscribe(&self, subject: &str, queue: &str) -> io::Result<Subscription> {
-        self.do_subscribe(subject, Some(queue))
+    pub async fn queue_subscribe(&self, subject: &str, queue: &str) -> io::Result<Subscription> {
+        self.do_subscribe(subject, Some(queue)).await
     }
 
     /// Publish a message on the given subject.
@@ -402,8 +408,9 @@ impl Connection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn publish(&self, subject: &str, msg: impl AsRef<[u8]>) -> io::Result<()> {
+    pub async fn publish(&self, subject: &str, msg: impl AsRef<[u8]>) -> io::Result<()> {
         self.publish_with_reply_or_headers(subject, None, None, msg)
+            .await
     }
 
     /// Publish a message on the given subject with a reply subject for
@@ -419,7 +426,7 @@ impl Connection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn publish_request(
+    pub async fn publish_request(
         &self,
         subject: &str,
         reply: &str,
@@ -428,6 +435,7 @@ impl Connection {
         self.0
             .client
             .publish(subject, Some(reply), None, msg.as_ref())
+            .await
     }
 
     /// Create a new globally unique inbox which can be used for replies.
@@ -457,8 +465,9 @@ impl Connection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn request(&self, subject: &str, msg: impl AsRef<[u8]>) -> io::Result<Message> {
+    pub async fn request(&self, subject: &str, msg: impl AsRef<[u8]>) -> io::Result<Message> {
         self.request_with_headers_or_timeout(subject, None, None, msg)
+            .await
     }
 
     /// Publish a message on the given subject as a request and receive the
@@ -474,16 +483,17 @@ impl Connection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn request_timeout(
+    pub async fn request_timeout(
         &self,
         subject: &str,
         msg: impl AsRef<[u8]>,
         timeout: Duration,
     ) -> io::Result<Message> {
         self.request_with_headers_or_timeout(subject, None, Some(timeout), msg)
+            .await
     }
 
-    fn request_with_headers_or_timeout(
+    async fn request_with_headers_or_timeout(
         &self,
         subject: &str,
         maybe_headers: Option<&HeaderMap>,
@@ -492,8 +502,9 @@ impl Connection {
     ) -> io::Result<Message> {
         // Publish a request.
         let reply = self.new_inbox();
-        let sub = self.subscribe(&reply)?;
-        self.publish_with_reply_or_headers(subject, Some(reply.as_str()), maybe_headers, msg)?;
+        let sub = self.subscribe(&reply).await?;
+        self.publish_with_reply_or_headers(subject, Some(reply.as_str()), maybe_headers, msg)
+            .await?;
 
         // Wait for the response
         let result = if let Some(timeout) = maybe_timeout {
@@ -526,11 +537,16 @@ impl Connection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn request_multi(&self, subject: &str, msg: impl AsRef<[u8]>) -> io::Result<Subscription> {
+    pub async fn request_multi(
+        &self,
+        subject: &str,
+        msg: impl AsRef<[u8]>,
+    ) -> io::Result<Subscription> {
         // Publish a request.
         let reply = self.new_inbox();
-        let sub = self.subscribe(&reply)?;
-        self.publish_with_reply_or_headers(subject, Some(reply.as_str()), None, msg)?;
+        let sub = self.subscribe(&reply).await?;
+        self.publish_with_reply_or_headers(subject, Some(reply.as_str()), None, msg)
+            .await?;
 
         // Return the subscription.
         Ok(sub)
@@ -550,8 +566,8 @@ impl Connection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn flush(&self) -> io::Result<()> {
-        self.flush_timeout(DEFAULT_FLUSH_TIMEOUT)
+    pub async fn flush(&self) -> io::Result<()> {
+        self.flush_timeout(DEFAULT_FLUSH_TIMEOUT).await
     }
 
     /// Flush a NATS connection by sending a `PING` protocol and waiting for the
@@ -568,8 +584,8 @@ impl Connection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn flush_timeout(&self, duration: Duration) -> io::Result<()> {
-        self.0.client.flush(duration)
+    pub async fn flush_timeout(&self, duration: Duration) -> io::Result<()> {
+        self.0.client.flush(duration).await
     }
 
     /// Close a NATS connection. All clones of
@@ -589,9 +605,9 @@ impl Connection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn close(self) {
-        self.0.client.flush(DEFAULT_FLUSH_TIMEOUT).ok();
-        self.0.client.close();
+    pub async fn close(self) {
+        self.0.client.flush(DEFAULT_FLUSH_TIMEOUT).await.ok();
+        self.0.client.close().await;
     }
 
     /// Calculates the round trip time between this client and the server,
@@ -606,9 +622,9 @@ impl Connection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn rtt(&self) -> io::Result<Duration> {
+    pub async fn rtt(&self) -> io::Result<Duration> {
         let start = Instant::now();
-        self.flush()?;
+        self.flush().await?;
         Ok(start.elapsed())
     }
 
@@ -622,8 +638,8 @@ impl Connection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn client_ip(&self) -> io::Result<std::net::IpAddr> {
-        let info = self.0.client.server_info();
+    pub async fn client_ip(&self) -> io::Result<std::net::IpAddr> {
+        let info = self.0.client.server_info().await;
 
         match info.client_ip.as_str() {
             "" => Err(Error::new(
@@ -659,8 +675,8 @@ impl Connection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn client_id(&self) -> u64 {
-        self.0.client.server_info().client_id
+    pub async fn client_id(&self) -> u64 {
+        self.0.client.server_info().await.client_id
     }
 
     /// Send an unsubscription for all subs then flush the connection, allowing
@@ -698,9 +714,9 @@ impl Connection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn drain(&self) -> io::Result<()> {
-        self.0.client.flush(DEFAULT_FLUSH_TIMEOUT)?;
-        self.0.client.close();
+    pub async fn drain(&self) -> io::Result<()> {
+        self.0.client.flush(DEFAULT_FLUSH_TIMEOUT).await?;
+        self.0.client.close().await;
         Ok(())
     }
 
@@ -721,14 +737,17 @@ impl Connection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn publish_with_reply_or_headers(
+    pub async fn publish_with_reply_or_headers(
         &self,
         subject: &str,
         reply: Option<&str>,
         headers: Option<&HeaderMap>,
         msg: impl AsRef<[u8]>,
     ) -> io::Result<()> {
-        self.0.client.publish(subject, reply, headers, msg.as_ref())
+        self.0
+            .client
+            .publish(subject, reply, headers, msg.as_ref())
+            .await
     }
 
     /// Returns the maximum payload size the most recently
@@ -741,12 +760,12 @@ impl Connection {
     /// println!("max payload: {:?}", nc.max_payload());
     /// # Ok(())
     /// # }
-    pub fn max_payload(&self) -> usize {
-        self.0.client.server_info.lock().max_payload
+    pub async fn max_payload(&self) -> usize {
+        self.0.client.server_info.lock().await.max_payload
     }
 
-    fn do_subscribe(&self, subject: &str, queue: Option<&str>) -> io::Result<Subscription> {
-        let (sid, receiver) = self.0.client.subscribe(subject, queue)?;
+    async fn do_subscribe(&self, subject: &str, queue: Option<&str>) -> io::Result<Subscription> {
+        let (sid, receiver) = self.0.client.subscribe(subject, queue).await?;
         Ok(Subscription::new(
             sid,
             subject.to_string(),
@@ -757,7 +776,7 @@ impl Connection {
 
     /// Attempts to publish a message without blocking.
     #[doc(hidden)]
-    pub fn try_publish_with_reply_or_headers(
+    pub async fn try_publish_with_reply_or_headers(
         &self,
         subject: &str,
         reply: Option<&str>,
@@ -767,5 +786,6 @@ impl Connection {
         self.0
             .client
             .try_publish(subject, reply, headers, msg.as_ref())
+            .await
     }
 }

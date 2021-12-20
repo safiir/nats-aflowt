@@ -9,9 +9,9 @@ use std::{
 
 use nats_test_server::NatsTestServer;
 
-#[test]
-#[ignore]
-fn reconnect_test() {
+#[tokio::test]
+//#[ignore]
+async fn reconnect_test() {
     env_logger::init();
 
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -35,16 +35,17 @@ fn reconnect_test() {
         if let Ok(nc) = nats::Options::new()
             .max_reconnects(None)
             .connect(&server.address().to_string())
+            .await
         {
             break Arc::new(nc);
         }
     };
 
-    let tx = thread::spawn({
+    let tx = tokio::spawn({
         let nc = nc.clone();
         let success = success.clone();
         let shutdown = shutdown.clone();
-        move || {
+        async move {
             const EXPECTED_SUCCESSES: usize = 25;
             let mut received = 0;
 
@@ -55,6 +56,7 @@ fn reconnect_test() {
                         "Help me?",
                         std::time::Duration::from_millis(200),
                     )
+                    .await
                     .is_ok()
                 {
                     received += 1;
@@ -70,7 +72,7 @@ fn reconnect_test() {
     });
 
     let subscriber = loop {
-        if let Ok(subscriber) = nc.subscribe("rust.tests.faulty_requests") {
+        if let Ok(subscriber) = nc.subscribe("rust.tests.faulty_requests").await {
             break subscriber;
         }
     };
@@ -83,5 +85,5 @@ fn reconnect_test() {
 
     shutdown.store(true, Ordering::Release);
 
-    tx.join().unwrap();
+    tx.await.unwrap();
 }
