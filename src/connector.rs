@@ -21,7 +21,6 @@ use std::ops::DerefMut;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::thread;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
@@ -199,7 +198,7 @@ impl Connector {
                 for addr in addrs {
                     // Sleep for some time if this is not the first connection
                     // attempt for this server.
-                    thread::sleep(sleep_duration);
+                    tokio::time::sleep(sleep_duration).await;
 
                     // Try connecting to this address.
                     let res = self.connect_addr(addr, server).await;
@@ -246,8 +245,8 @@ impl Connector {
         // Expect an INFO message.
         let mut line = crate::SecureVec::with_capacity(1024);
         while !line.ends_with(b"\r\n") {
-            let mut byte = Vec::with_capacity(1);
-            stream.read_to_end(&mut byte).await?;
+            let byte = &mut [0];
+            stream.read_exact(byte).await?;
             line.push(byte[0]);
         }
         let server_info = match proto::decode(&line[..]).await? {

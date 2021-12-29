@@ -106,7 +106,7 @@ async fn main() -> std::io::Result<()> {
             let s = nc.subscribe(&subject).await.unwrap();
             barrier.wait();
             for _ in 0..messages {
-                s.next().unwrap();
+                s.next().await.unwrap();
             }
         }));
     }

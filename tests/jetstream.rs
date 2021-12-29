@@ -245,7 +245,7 @@ async fn jetstream_publish() {
     .await
     .ok();
 
-    let msg = sub.next_timeout(Duration::from_secs(1)).unwrap();
+    let msg = sub.next_timeout(Duration::from_secs(1)).await.unwrap();
     assert_eq!(
         msg.headers
             .unwrap()

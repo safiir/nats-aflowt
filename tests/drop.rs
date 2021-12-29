@@ -17,7 +17,7 @@ async fn drop_flushes() -> io::Result<()> {
     nc1.publish(&inbox, b"hello").await?;
     drop(nc1); // Dropping should flush the published message.
 
-    assert_eq!(sub.next().unwrap().data, b"hello");
+    assert_eq!(sub.next().await.unwrap().data, b"hello");
 
     Ok(())
 }
@@ -40,30 +40,25 @@ async fn two_connections() -> io::Result<()> {
 
 #[tokio::test]
 async fn async_subscription_drop() -> io::Result<()> {
+    use std::time::Duration;
+
     let s = util::run_basic_server();
 
-    smol::block_on(async {
-        let nc = nats::connect(&s.client_url()).await?;
+    let nc = nats::connect(&s.client_url()).await?;
+    let inbox = nc.new_inbox();
 
-        let inbox = nc.new_inbox();
-
-        // This makes sure the subscription is closed after being dropped. If it wasn't closed,
-        // creating the 501st subscription would block forever due to the `blocking` crate's thread
-        // pool being fully occupied.
-        for _ in 0..600 {
-            let sub = nc.subscribe(&inbox).await.or({
-                smol::Timer::after(std::time::Duration::from_secs(2)).await;
-                Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "unable to create subscription",
-                ))
-            })?;
-            sub.next().or({
-                smol::Timer::after(std::time::Duration::from_millis(1)).await;
-                None
-            });
-        }
-
-        Ok(())
-    })
+    // This makes sure the subscription is closed after being dropped. If it wasn't closed,
+    // creating the 501st subscription would block forever due to the `blocking` crate's thread
+    // pool being fully occupied.
+    for i in 0..600 {
+        let sub = match tokio::time::timeout(Duration::from_secs(2), nc.subscribe(&inbox)).await {
+            Ok(sub) => sub,
+            Err(_) => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("unable to create subscription {}", i),
+            )),
+        }?;
+        sub.next_timeout(Duration::from_millis(1)).await.ok();
+    }
+    Ok(())
 }

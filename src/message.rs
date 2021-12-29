@@ -96,7 +96,9 @@ impl Message {
             .client
             .as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, MESSAGE_NOT_BOUND))?;
-        client.publish(reply.as_str(), None, None, msg.as_ref()).await?;
+        client
+            .publish(reply.as_str(), None, None, msg.as_ref())
+            .await?;
         Ok(())
     }
 
@@ -135,7 +137,7 @@ impl Message {
     /// server acks your ack, use the `double_ack` method instead.
     ///
     /// Does not check whether this message has already been double-acked.
-    #[cfg(feature="jetstream")]
+    #[cfg(feature = "jetstream")]
     pub async fn ack_kind(&self, ack_kind: crate::jetstream::AckKind) -> io::Result<()> {
         self.respond(ack_kind).await
     }
@@ -145,7 +147,7 @@ impl Message {
     /// See `AckKind` documentation for details of what each variant means.
     ///
     /// Returns immediately if this message has already been double-acked.
-    #[cfg(feature="jetstream")]
+    #[cfg(feature = "jetstream")]
     pub async fn double_ack(&self, ack_kind: crate::jetstream::AckKind) -> io::Result<()> {
         if self.double_acked.load(Ordering::Acquire) {
             return Ok(());
@@ -173,16 +175,18 @@ impl Message {
             let ack_reply = format!("_INBOX.{}", nuid::next());
             let sub_ret = client.subscribe(&ack_reply, None).await;
             if sub_ret.is_err() {
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 continue;
             }
             let (sid, receiver) = sub_ret?;
             let sub =
                 crate::Subscription::new(sid, ack_reply.to_string(), receiver, client.clone());
 
-            let pub_ret = client.publish(original_reply, Some(&ack_reply), None, ack_kind.as_ref()).await;
+            let pub_ret = client
+                .publish(original_reply, Some(&ack_reply), None, ack_kind.as_ref())
+                .await;
             if pub_ret.is_err() {
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 continue;
             }
             if sub
@@ -195,7 +199,7 @@ impl Message {
         }
     }
 
-    #[cfg(feature="jetstream")]
+    #[cfg(feature = "jetstream")]
     /// Returns the `JetStream` message ID
     /// if this is a `JetStream` message.
     /// Returns `None` if this is not

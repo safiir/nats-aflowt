@@ -19,12 +19,9 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
-
-use std::thread;
 use std::time::{Duration, Instant};
 
-use crossbeam_channel as channel;
-use crossbeam_channel::RecvTimeoutError;
+//use crossbeam_channel as channel;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::{io::BufReader, io::BufWriter, sync::Mutex};
 
@@ -34,6 +31,8 @@ use crate::proto::{self, ClientOp, ServerOp};
 use crate::{header::HeaderMap, inject_delay, inject_io_failure, Options, ServerInfo};
 
 const BUF_CAPACITY: usize = 32 * 1024;
+/// maximum messages to queue before applying backpressure
+const MAX_SUBSCRIPTION_QUEUE: usize = 512;
 
 /// Client state.
 ///
@@ -53,7 +52,7 @@ struct WriteState {
     writer: Option<BufWriter<NatsStream>>,
 
     /// Signals to the client thread that the writer needs a flush.
-    flush_kicker: channel::Sender<()>,
+    flush_kicker: tokio::sync::mpsc::Sender<()>,
 
     /// The reconnect buffer.
     ///
@@ -71,7 +70,7 @@ struct ReadState {
     subscriptions: HashMap<u64, Subscription>,
 
     /// Expected pongs and their notification channels.
-    pongs: VecDeque<channel::Sender<()>>,
+    pongs: VecDeque<tokio::sync::mpsc::Sender<()>>,
 
     /// Tracks the last activity from the server.
     last_active: Instant,
@@ -84,7 +83,7 @@ struct ReadState {
 struct Subscription {
     subject: String,
     queue_group: Option<String>,
-    messages: channel::Sender<Message>,
+    messages: tokio::sync::mpsc::Sender<Message>,
 }
 
 /// A NATS client.
@@ -106,12 +105,15 @@ pub struct Client {
 impl Client {
     /// Creates a new client that will begin connecting in the background.
     pub(crate) async fn connect(url: &str, options: Options) -> io::Result<Client> {
+        crate::tokio_console_init();
         // A channel for coordinating flushes.
-        let (flush_kicker, flush_wanted) = channel::bounded(1);
+        //let (flush_kicker, flush_wanted) = channel::bounded(1);
+        let (flush_kicker, mut flush_wanted) = tokio::sync::mpsc::channel(1);
 
         // Channels for coordinating initial connect.
-        let (run_sender, run_receiver) = channel::bounded(1);
-        let (pong_sender, pong_receiver) = channel::bounded::<()>(1);
+        let (run_sender, run_receiver) = tokio::sync::oneshot::channel();
+        //let (pong_sender, pong_receiver) = channel::bounded::<()>(1);
+        let (pong_sender, mut pong_receiver) = tokio::sync::mpsc::channel(1);
 
         // The client state.
         let _client = Client {
@@ -166,84 +168,80 @@ impl Client {
             }
         });
 
-        channel::select! {
-            recv(run_receiver) -> res => {
+        tokio::select! {
+            res = run_receiver => {
                 res.expect("client thread has panicked")?;
                 unreachable!()
             }
-            recv(pong_receiver) -> _ => {}
-        }
+            _ = pong_receiver.recv()  => { }
+        };
 
         // Spawn a thread that periodically flushes buffered messages.
         let client = _client.clone();
         tokio::spawn(async move {
-            {
-                // Track last flush/write time.
-                const MIN_FLUSH_BETWEEN: Duration = Duration::from_millis(5);
+            // Track last flush/write time.
+            const MIN_FLUSH_BETWEEN: Duration = Duration::from_millis(5);
 
-                // Handle recv timeouts and check if we should send a PING.
-                // TODO(dlc) - Make configurable.
-                const PING_INTERVAL: Duration = Duration::from_secs(2 * 60);
-                const MAX_PINGS_OUT: u8 = 2;
+            // Handle recv timeouts and check if we should send a PING.
+            // TODO(dlc) - Make configurable.
+            const PING_INTERVAL: Duration = Duration::from_secs(2 * 60);
+            const MAX_PINGS_OUT: u8 = 2;
 
-                let mut last = Instant::now() - MIN_FLUSH_BETWEEN;
+            let mut last = Instant::now() - MIN_FLUSH_BETWEEN;
 
-                // Wait until at least one message is buffered.
-                loop {
-                    match flush_wanted.recv_timeout(PING_INTERVAL) {
-                        Ok(_) => {
-                            let since = last.elapsed();
-                            if since < MIN_FLUSH_BETWEEN {
-                                thread::sleep(MIN_FLUSH_BETWEEN - since);
+            // Wait until at least one message is buffered.
+            loop {
+                match tokio::time::timeout(PING_INTERVAL, flush_wanted.recv()).await {
+                    Ok(_) => {
+                        let since = last.elapsed();
+                        if since < MIN_FLUSH_BETWEEN {
+                            tokio::time::sleep(MIN_FLUSH_BETWEEN - since).await;
+                        }
+
+                        // Flush the writer.
+                        let mut write = client.state.write.lock().await;
+                        if let Some(writer) = write.writer.as_mut() {
+                            // If flushing fails, disconnect.
+                            if let Err(_) = writer.flush().await {
+                                last = Instant::now();
+                                let _ = writer.shutdown().await;
+                                write.writer = None;
+                                let mut read = client.state.read.lock().await;
+                                read.pongs.clear();
                             }
+                        }
+                        drop(write);
+                    }
 
-                            // Flush the writer.
-                            let mut write = client.state.write.lock().await;
+                    // timeout
+                    Err(_) => {
+                        let mut write = client.state.write.lock().await;
+                        let mut read = client.state.read.lock().await;
+
+                        if read.pings_out >= MAX_PINGS_OUT {
                             if let Some(writer) = write.writer.as_mut() {
-                                // If flushing fails, disconnect.
+                                writer.get_mut().shutdown().await;
+                            }
+                            write.writer = None;
+                            read.pongs.clear();
+                        } else if read.last_active.elapsed() > PING_INTERVAL {
+                            read.pings_out += 1;
+                            read.pongs.push_back(write.flush_kicker.clone());
+                            // Send out a PING here.
+                            if let Some(mut writer) = write.writer.as_mut() {
+                                // Ok to ignore errors here.
+                                let _ = proto::encode(&mut writer, ClientOp::Ping).await;
                                 if let Err(_) = writer.flush().await {
-                                    last = Instant::now();
-                                    let _ = writer.shutdown().await;
+                                    // NB see locking protocol for state.write and state.read
+                                    writer.shutdown().await.ok();
                                     write.writer = None;
-                                    let mut read = client.state.read.lock().await;
                                     read.pongs.clear();
                                 }
                             }
-                            drop(write);
                         }
-                        Err(RecvTimeoutError::Timeout) => {
-                            let mut write = client.state.write.lock().await;
-                            let mut read = client.state.read.lock().await;
 
-                            if read.pings_out >= MAX_PINGS_OUT {
-                                if let Some(writer) = write.writer.as_mut() {
-                                    writer.get_mut().shutdown().await;
-                                }
-                                write.writer = None;
-                                read.pongs.clear();
-                            } else if read.last_active.elapsed() > PING_INTERVAL {
-                                read.pings_out += 1;
-                                read.pongs.push_back(write.flush_kicker.clone());
-                                // Send out a PING here.
-                                if let Some(mut writer) = write.writer.as_mut() {
-                                    // Ok to ignore errors here.
-                                    let _ = proto::encode(&mut writer, ClientOp::Ping).await;
-                                    if let Err(_) = writer.flush().await {
-                                        // NB see locking protocol for state.write and state.read
-                                        writer.shutdown().await.ok();
-                                        write.writer = None;
-                                        read.pongs.clear();
-                                    }
-                                }
-                            }
-
-                            drop(read);
-                            drop(write);
-                        }
-                        _ => {
-                            // Any other err break and exit.
-                            break;
-                        }
+                        drop(read);
+                        drop(write);
                     }
                 }
             }
@@ -259,16 +257,16 @@ impl Client {
 
     /// Makes a round trip to the server to ensure buffered messages reach it.
     pub(crate) async fn flush(&self, timeout: Duration) -> io::Result<()> {
-        let pong = {
+        let mut pong = {
             // Inject random delays when testing.
-            inject_delay();
+            inject_delay().await;
 
             let mut write = self.state.write.lock().await;
 
             // Check if the client is closed.
             self.check_shutdown()?;
 
-            let (sender, receiver) = channel::bounded(1);
+            let (sender, receiver) = tokio::sync::mpsc::channel(1);
 
             // If connected, send a PING.
             match write.writer.as_mut() {
@@ -296,16 +294,16 @@ impl Client {
         };
 
         // Wait until the PONG operation is received.
-        match pong.recv() {
-            Ok(()) => Ok(()),
-            Err(_) => Err(Error::new(ErrorKind::ConnectionReset, "flush failed")),
+        match pong.recv().await {
+            Some(()) => Ok(()),
+            None => Err(Error::new(ErrorKind::ConnectionReset, "flush failed")),
         }
     }
 
     /// Closes the client.
     pub(crate) async fn close(&self) {
         // Inject random delays when testing.
-        inject_delay();
+        inject_delay().await;
 
         let mut write = self.state.write.lock().await;
         let mut read = self.state.read.lock().await;
@@ -361,9 +359,9 @@ impl Client {
         &self,
         subject: &str,
         queue_group: Option<&str>,
-    ) -> io::Result<(u64, channel::Receiver<Message>)> {
+    ) -> io::Result<(u64, crate::subscription::Receiver<Message>)> {
         // Inject random delays when testing.
-        inject_delay();
+        inject_delay().await;
 
         let mut write = self.state.write.lock().await;
         let mut read = self.state.read.lock().await;
@@ -387,7 +385,7 @@ impl Client {
         }
 
         // Register the subscription in the hash map.
-        let (sender, receiver) = channel::unbounded();
+        let (sender, receiver) = tokio::sync::mpsc::channel(MAX_SUBSCRIPTION_QUEUE);
         read.subscriptions.insert(
             sid,
             Subscription {
@@ -401,13 +399,13 @@ impl Client {
         drop(read);
         drop(write);
 
-        Ok((sid, receiver))
+        Ok((sid, receiver.into()))
     }
 
     /// Unsubscribes from a subject.
     pub(crate) async fn unsubscribe(&self, sid: u64) -> io::Result<()> {
         // Inject random delays when testing.
-        inject_delay();
+        inject_delay().await;
 
         let mut write = self.state.write.lock().await;
         let mut read = self.state.read.lock().await;
@@ -446,7 +444,7 @@ impl Client {
         msg: &[u8],
     ) -> io::Result<()> {
         // Inject random delays when testing.
-        inject_delay();
+        inject_delay().await;
 
         let server_info = self.server_info.lock().await;
         if headers.is_some() && !server_info.headers {
@@ -626,7 +624,7 @@ impl Client {
             drop(read);
 
             // Inject random delays when testing.
-            inject_delay();
+            inject_delay().await;
 
             // Quit if the client is closed.
             if self.check_shutdown().is_err() {
@@ -643,7 +641,7 @@ impl Client {
         mut writer: BufWriter<NatsStream>,
     ) -> io::Result<()> {
         // Inject random delays when testing.
-        inject_delay();
+        inject_delay().await;
 
         // Check if the client is closed.
         self.check_shutdown()?;
@@ -719,7 +717,7 @@ impl Client {
         // Handle operations received from the server.
         while let Some(op) = proto::decode(&mut reader).await? {
             // Inject random delays when testing.
-            inject_delay();
+            inject_delay().await;
 
             if self.check_shutdown().is_err() {
                 break;

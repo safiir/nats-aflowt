@@ -219,7 +219,7 @@ mod fault_injection;
 use fault_injection::{inject_delay, inject_io_failure};
 
 #[cfg(not(feature = "fault_injection"))]
-fn inject_delay() {}
+async fn inject_delay() {}
 
 #[cfg(not(feature = "fault_injection"))]
 fn inject_io_failure() -> io::Result<()> {
@@ -356,6 +356,7 @@ impl Drop for Inner {
 /// # }
 /// ```
 pub async fn connect(nats_url: &str) -> io::Result<Connection> {
+    tokio_console_init();
     Options::new().connect(nats_url).await
 }
 
@@ -365,6 +366,7 @@ impl Connection {
         url: &str,
         options: Options,
     ) -> io::Result<Connection> {
+        tokio_console_init();
         let client = Client::connect(url, options).await?;
         client.flush(DEFAULT_FLUSH_TIMEOUT).await?;
         Ok(Connection(Arc::new(Inner { client })))
@@ -508,8 +510,8 @@ impl Connection {
 
         // Wait for the response
         let result = if let Some(timeout) = maybe_timeout {
-            sub.next_timeout(timeout)
-        } else if let Some(msg) = sub.next() {
+            sub.next_timeout(timeout).await
+        } else if let Some(msg) = sub.next().await {
             Ok(msg)
         } else {
             Err(ErrorKind::ConnectionReset.into())
@@ -788,4 +790,14 @@ impl Connection {
             .try_publish(subject, reply, headers, msg.as_ref())
             .await
     }
+}
+
+use once_cell::sync::OnceCell;
+static TOKIO_CONSOLE_INIT: OnceCell<bool> = OnceCell::new();
+
+pub(crate) fn tokio_console_init() {
+    TOKIO_CONSOLE_INIT.get_or_init(|| {
+        console_subscriber::init();
+        true
+    });
 }

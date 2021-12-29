@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 /// This function is useful for inducing random jitter into our operations that
 /// trigger cross-thread communication, shaking out more possible interleavings
 /// quickly. It gets fully eliminated by the compiler in non-test code.
-pub fn inject_delay() {
+pub async fn inject_delay() {
     use std::thread;
     use std::time::Duration;
 
@@ -46,13 +46,13 @@ pub fn inject_delay() {
     if fastrand::i32(..10) == 0 {
         let duration = fastrand::u64(..50);
 
-        #[allow(clippy::cast_possible_truncation)]
-        #[allow(clippy::cast_sign_loss)]
-        thread::sleep(Duration::from_millis(duration));
+        //#[allow(clippy::cast_possible_truncation)]
+        //#[allow(clippy::cast_sign_loss)]
+        tokio::time::sleep(Duration::from_millis(duration)).await;
     }
 
     if fastrand::i32(..2) == 0 {
-        thread::yield_now();
+        //thread::yield_now();
     }
 }
 

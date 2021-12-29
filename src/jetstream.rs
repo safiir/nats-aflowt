@@ -1159,13 +1159,13 @@ impl Consumer {
 
         while let Some(next) = {
             if received == 0 {
-                responses.next()
+                responses.next().await
             } else {
                 let timeout = self
                     .timeout
                     .checked_sub(start.elapsed())
                     .unwrap_or_default();
-                responses.next_timeout(timeout).ok()
+                responses.next_timeout(timeout).await.ok()
             }
         } {
             let ret = f(&next);
@@ -1214,7 +1214,7 @@ impl Consumer {
     /// failed ack, use `process_batch` instead.
     pub async fn process<R, F: Fn(&Message) -> io::Result<R>>(&mut self, f: F) -> io::Result<R> {
         let next = if let Some(ps) = &self.push_subscriber {
-            ps.next().unwrap()
+            ps.next().await.unwrap()
         } else {
             if self.cfg.durable_name.is_none() {
                 return Err(io::Error::new(
@@ -1257,7 +1257,7 @@ impl Consumer {
         f: F,
     ) -> io::Result<R> {
         let next = if let Some(ps) = &self.push_subscriber {
-            ps.next_timeout(self.timeout)?
+            ps.next_timeout(self.timeout).await?
         } else {
             if self.cfg.durable_name.is_none() {
                 return Err(io::Error::new(
@@ -1299,7 +1299,8 @@ impl Consumer {
                 ..Default::default()
             })
             .await?
-            .next();
+            .next()
+            .await;
 
         if let Some(ret) = ret_opt {
             Ok(ret)

@@ -11,12 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use futures::Stream;
 use std::io;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-
-use crossbeam_channel as channel;
+use tokio::sync::Mutex;
 
 use crate::client::Client;
 use crate::message::Message;
@@ -30,7 +30,7 @@ struct Inner {
     pub(crate) subject: String,
 
     /// MSG operations received from the server.
-    pub(crate) messages: channel::Receiver<Message>,
+    pub(crate) messages: Receiver<Message>,
 
     /// Client associated with subscription.
     pub(crate) client: Client,
@@ -46,6 +46,40 @@ impl Drop for Inner {
     }
 }
 
+/// Wrapper around tokio::sync::mpsc::Receiver that provides interior mutability
+#[derive(Debug)]
+pub struct Receiver<T> {
+    inner: Mutex<tokio::sync::mpsc::Receiver<T>>,
+}
+
+impl<T> Receiver<T> {
+    /// Receives the next value. Returns None if the channel has been closed
+    /// and there are no more values.
+    pub async fn recv(&self) -> Option<T> {
+        let mut receiver = self.inner.lock().await;
+        receiver.recv().await
+    }
+
+    /// Return Some(message) if a message is avaialable,
+    /// or None if there are no messages available,
+    /// or the subscription has been closed or client disconnected.
+    pub async fn try_recv(&self) -> Option<T> {
+        let mut receiver = self.inner.lock().await;
+        match receiver.try_recv() {
+            Ok(m) => Some(m),
+            Err(_) => None,
+        }
+    }
+}
+
+impl<T> From<tokio::sync::mpsc::Receiver<T>> for Receiver<T> {
+    fn from(r: tokio::sync::mpsc::Receiver<T>) -> Self {
+        Self {
+            inner: Mutex::new(r),
+        }
+    }
+}
+
 /// A `Subscription` receives `Message`s published
 /// to specific NATS `Subject`s.
 #[derive(Clone, Debug)]
@@ -56,7 +90,7 @@ impl Subscription {
     pub(crate) fn new(
         sid: u64,
         subject: String,
-        messages: channel::Receiver<Message>,
+        messages: Receiver<Message>,
         client: Client,
     ) -> Subscription {
         Subscription(Arc::new(Inner {
@@ -67,8 +101,8 @@ impl Subscription {
         }))
     }
 
-    /// Get a crossbeam Receiver for subscription messages.
-    /// Useful for `crossbeam_channel::select` macro
+    /// Get a Receiver for subscription messages.
+    /// Useful for `tokio::select` macro
     ///
     /// # Example
     /// ```
@@ -79,23 +113,23 @@ impl Subscription {
     /// # nc.publish("foo", "hello")?;
     /// let sub1_ch = sub1.receiver();
     /// let sub2_ch = sub2.receiver();
-    /// crossbeam_channel::select! {
-    ///     recv(sub1_ch) -> msg => {
+    /// tokio::select! {
+    ///     msg = sub1_ch.recv() => {
     ///         println!("Got message from sub1: {:?}", msg);
     ///         Ok(())
     ///     }
-    ///     recv(sub2_ch) -> msg => {
+    ///     msg = sub2_ch.recv() => {
     ///         println!("Got message from sub2: {:?}", msg);
     ///         Ok(())
     ///     }
     /// }
     /// # }
     /// ```
-    pub fn receiver(&self) -> &channel::Receiver<Message> {
+    pub fn receiver(&self) -> &Receiver<Message> {
         &self.0.messages
     }
 
-    /// Get the next message, or None if the subscription
+    /// Get (wait for) the next message, or None if the subscription
     /// has been unsubscribed or the connection closed.
     ///
     /// # Example
@@ -108,8 +142,8 @@ impl Subscription {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn next(&self) -> Option<Message> {
-        self.0.messages.recv().ok()
+    pub async fn next(&self) -> Option<Message> {
+        self.0.messages.recv().await
     }
 
     /// Try to get the next message, or None if no messages
@@ -127,8 +161,8 @@ impl Subscription {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn try_next(&self) -> Option<Message> {
-        self.0.messages.try_recv().ok()
+    pub async fn try_next(&self) -> Option<Message> {
+        self.0.messages.try_recv().await
     }
 
     /// Get the next message, or a timeout error
@@ -143,83 +177,63 @@ impl Subscription {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn next_timeout(&self, timeout: Duration) -> io::Result<Message> {
-        match self.0.messages.recv_timeout(timeout) {
-            Ok(msg) => Ok(msg),
-            Err(channel::RecvTimeoutError::Timeout) => Err(io::Error::new(
+    pub async fn next_timeout(&self, timeout: Duration) -> io::Result<Message> {
+        match tokio::time::timeout(timeout, self.0.messages.recv()).await {
+            Ok(Some(msg)) => Ok(msg),
+            Ok(None) => Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "next_timeout: timed out",
             )),
-            Err(channel::RecvTimeoutError::Disconnected) => Err(io::Error::new(
+            Err(_) => Err(io::Error::new(
                 io::ErrorKind::Other,
                 "next_timeout: unsubscribed",
             )),
         }
     }
 
-    /// Returns a blocking message iterator.
-    /// Same as calling `iter()`.
+    /// Returns a message stream.
+    /// same as `stream()`
     ///
     /// # Example
     /// ```no_run
+    /// use futures_util::pin_mut;
     /// # fn main() -> std::io::Result<()> {
     /// # let nc = nats::connect("demo.nats.io")?;
     /// # let sub = nc.subscribe("foo")?;
-    /// for msg in sub.messages() {}
+    /// let stream = sub.messages();
+    /// pin_mut!(stream); // needed for iteration
+    /// while let Some(msg) = stream.next().await {
+    ///    // ...
+    /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub fn messages(&self) -> Iter<'_> {
-        Iter { subscription: self }
-    }
-
-    /// Returns a blocking message iterator.
-    ///
-    /// # Example
-    /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// # let sub = nc.subscribe("foo")?;
-    /// for msg in sub.iter() {}
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn iter(&self) -> Iter<'_> {
-        Iter { subscription: self }
-    }
-
-    /// Returns a non-blocking message iterator.
-    ///
-    /// # Example
-    /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// # let sub = nc.subscribe("foo")?;
-    /// for msg in sub.try_iter() {}
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn try_iter(&self) -> TryIter<'_> {
-        TryIter { subscription: self }
-    }
-
-    /// Returns a blocking message iterator with a time
-    /// deadline for blocking.
-    ///
-    /// # Example
-    /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// # let sub = nc.subscribe("foo")?;
-    /// for msg in sub.timeout_iter(std::time::Duration::from_secs(1)) {}
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn timeout_iter(&self, timeout: Duration) -> TimeoutIter<'_> {
-        TimeoutIter {
-            subscription: self,
-            to: timeout,
+    pub fn messages(&self) -> impl Stream<Item = Message> + '_ {
+        async_stream::stream! {
+            while let Some(message) = self.next().await {
+                yield message;
+            }
         }
+    }
+
+    /// Returns a message stream.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use futures_util::pin_mut;
+    /// # fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io")?;
+    /// # let sub = nc.subscribe("foo")?;
+    /// let stream = sub.stream();
+    /// pin_mut!(stream); // needed for iteration
+    /// while let Some(msg) = stream.next().await {
+    ///    // ...
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn stream(&self) -> impl Stream<Item = Message> + '_ {
+        self.messages()
     }
 
     /// Attach a closure to handle messages. This closure will execute in a
@@ -249,12 +263,14 @@ impl Subscription {
         thread::Builder::new()
             .name(format!("nats_subscriber_{}_{}", self.0.sid, self.0.subject))
             .spawn(move || {
-                for m in sub.iter() {
-                    if let Err(e) = handler(m) {
-                        // TODO(dlc) - Capture for last error?
-                        log::error!("Error in callback! {:?}", e);
+                futures::executor::block_on(async {
+                    while let Some(m) = sub.next().await {
+                        if let Err(e) = handler(m) {
+                            // TODO(dlc) - Capture for last error?
+                            log::error!("Error in callback! {:?}", e);
+                        }
                     }
-                }
+                })
             })
             .expect("threads should be spawnable");
         Handler { sub: self }
@@ -276,7 +292,7 @@ impl Subscription {
     pub async fn unsubscribe(self) -> io::Result<()> {
         self.drain().await?;
         // Discard all queued messages.
-        while self.0.messages.try_recv().is_ok() {}
+        while self.0.messages.try_recv().await.is_some() {}
         Ok(())
     }
 
@@ -343,24 +359,6 @@ impl Subscription {
     }
 }
 
-impl IntoIterator for Subscription {
-    type Item = Message;
-    type IntoIter = IntoIter;
-
-    fn into_iter(self) -> IntoIter {
-        IntoIter { subscription: self }
-    }
-}
-
-impl<'a> IntoIterator for &'a Subscription {
-    type Item = Message;
-    type IntoIter = Iter<'a>;
-
-    fn into_iter(self) -> Iter<'a> {
-        Iter { subscription: self }
-    }
-}
-
 /// A `Handler` may be used to unsubscribe a handler thread.
 pub struct Handler {
     sub: Subscription,
@@ -383,56 +381,5 @@ impl Handler {
     /// ```
     pub async fn unsubscribe(self) -> io::Result<()> {
         self.sub.drain().await
-    }
-}
-
-/// A non-blocking iterator over messages from a `Subscription`
-pub struct TryIter<'a> {
-    subscription: &'a Subscription,
-}
-
-impl<'a> Iterator for TryIter<'a> {
-    type Item = Message;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.subscription.try_next()
-    }
-}
-
-/// An iterator over messages from a `Subscription`
-pub struct Iter<'a> {
-    subscription: &'a Subscription,
-}
-
-impl<'a> Iterator for Iter<'a> {
-    type Item = Message;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.subscription.next()
-    }
-}
-
-/// An iterator over messages from a `Subscription`
-pub struct IntoIter {
-    subscription: Subscription,
-}
-
-impl Iterator for IntoIter {
-    type Item = Message;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.subscription.next()
-    }
-}
-
-/// An iterator over messages from a `Subscription`
-/// where `None` will be returned if a new `Message`
-/// has not been received by the end of a timeout.
-pub struct TimeoutIter<'a> {
-    subscription: &'a Subscription,
-    to: Duration,
-}
-
-impl<'a> Iterator for TimeoutIter<'a> {
-    type Item = Message;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.subscription.next_timeout(self.to).ok()
     }
 }

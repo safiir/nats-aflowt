@@ -96,7 +96,7 @@ fn main() -> std::io::Result<()> {
                 smol::block_on(async {
                     let s = nc.subscribe(&subject).await.unwrap();
                     for _ in 0..messages {
-                        s.next().unwrap();
+                        s.next().await.unwrap();
                     }
                 })
             }));

@@ -63,7 +63,7 @@ async fn main() -> CliResult {
         Command::Sub { subject } => {
             let sub = nc.subscribe(&subject).await?;
             println!("Listening on '{}'", subject);
-            for msg in sub.messages() {
+            while let Some(msg) = sub.next().await {
                 println!("Received a {:?}", msg);
             }
         }
@@ -75,7 +75,7 @@ async fn main() -> CliResult {
         Command::Reply { subject, resp } => {
             let sub = nc.queue_subscribe(&subject, "rust-box").await?;
             println!("Listening for requests on '{}'", subject);
-            for msg in sub.messages() {
+            while let Some(msg) = sub.next().await {
                 println!("Received a request {:?}", msg);
                 msg.respond(&resp).await?;
             }
