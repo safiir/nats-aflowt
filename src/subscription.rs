@@ -293,6 +293,7 @@ impl Subscription {
     ///
     /// # Example
     /// ```
+    /// #![feature(async_closure)]
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// # let nc = nats::connect("demo.nats.io").await?;
