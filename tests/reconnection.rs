@@ -10,7 +10,6 @@ use std::{
 use nats_test_server::NatsTestServer;
 
 #[tokio::test]
-//#[ignore]
 async fn reconnect_test() {
     env_logger::init();
 
@@ -79,7 +78,7 @@ async fn reconnect_test() {
 
     while !success.load(Ordering::Acquire) {
         while let Ok(msg) = subscriber.next_timeout(Duration::from_millis(10)).await {
-            let _unchecked = msg.respond("Anything for the story");
+            let _unchecked = msg.respond("Anything for the story").await;
         }
     }
 

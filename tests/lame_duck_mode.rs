@@ -1,22 +1,30 @@
 mod util;
 use std::time::Duration;
-
-use crossbeam_channel::bounded;
 pub use util::*;
 
 #[tokio::test]
 #[cfg_attr(target_os = "windows", ignore)]
 async fn lame_duck_mode() {
-    let (ltx, lrx) = bounded(1);
+    let (ltx, mut lrx) = tokio::sync::mpsc::channel(1);
 
     let s = util::run_basic_server();
     let nc = nats::Options::new()
-        .lame_duck_callback(move || ltx.send(true).unwrap())
+        .lame_duck_callback(move || {
+            let ltx = ltx.clone();
+            let _ = tokio::spawn(async move {
+                ltx.send(true).await.unwrap();
+            });
+        })
         .connect(s.client_url().as_str())
         .await
         .expect("could not connect to the server");
     let _sub = nc.subscribe("foo").await.unwrap();
     set_lame_duck_mode();
-    let r = lrx.recv_timeout(Duration::from_millis(500));
-    assert!(r.is_ok(), "expected lame duck response, got nothing");
+    let r = tokio::time::timeout(Duration::from_millis(500), lrx.recv()).await;
+    assert!(r.is_ok(), "expected lame duck response, got timeout");
+    let r = r.unwrap();
+    assert!(
+        r.is_some(),
+        "expected lame duck response, got stream closed"
+    );
 }

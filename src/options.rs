@@ -129,9 +129,10 @@ impl Options {
     ///
     /// # Example
     /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let options = nats::Options::new();
-    /// let nc = options.connect("demo.nats.io")?;
+    /// let nc = options.connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -143,9 +144,10 @@ impl Options {
     ///
     /// # Example
     /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::with_token("t0k3n!")
-    ///     .connect("demo.nats.io")?;
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -160,9 +162,10 @@ impl Options {
     ///
     /// # Example
     /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::with_user_pass("derek", "s3cr3t!")
-    ///     .connect("demo.nats.io")?;
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -181,9 +184,10 @@ impl Options {
     ///
     /// # Example
     /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::with_credentials("path/to/my.creds")
-    ///     .connect("connect.ngs.global")?;
+    ///     .connect("connect.ngs.global").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -218,7 +222,8 @@ impl Options {
     ///
     /// # Example
     /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let creds =
     /// "-----BEGIN NATS USER JWT-----
     /// eyJ0eXAiOiJqd3QiLCJhbGciOiJlZDI1NTE5...
@@ -235,7 +240,7 @@ impl Options {
     ///
     /// let nc = nats::Options::with_static_credentials(creds)
     ///     .expect("failed to parse static creds")
-    ///     .connect("connect.ngs.global")?;
+    ///     .connect("connect.ngs.global").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -255,6 +260,8 @@ impl Options {
     ///
     /// # Example
     /// ```no_run
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let seed = "SUANQDPB2RUOE4ETUA26CNX7FUKE5ZZKFCQIIW63OX225F2CO7UEXTM7ZY";
     /// let kp = nkeys::KeyPair::from_seed(seed).unwrap();
     ///
@@ -263,8 +270,8 @@ impl Options {
     /// }
     ///
     /// let nc = nats::Options::with_jwt(load_jwt, move |nonce| kp.sign(nonce).unwrap())
-    ///     .connect("localhost")?;
-    /// # std::io::Result::Ok(())
+    ///     .connect("localhost").await?;
+    /// # std::io::Result::Ok(()) }
     /// ```
     pub fn with_jwt<J, S>(jwt_cb: J, sig_cb: S) -> Options
     where
@@ -284,13 +291,15 @@ impl Options {
     ///
     /// # Example
     /// ```no_run
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nkey = "UAMMBNV2EYR65NYZZ7IAK5SIR5ODNTTERJOBOF4KJLMWI45YOXOSWULM";
     /// let seed = "SUANQDPB2RUOE4ETUA26CNX7FUKE5ZZKFCQIIW63OX225F2CO7UEXTM7ZY";
     /// let kp = nkeys::KeyPair::from_seed(seed).unwrap();
     ///
     /// let nc = nats::Options::with_nkey(nkey, move |nonce| kp.sign(nonce).unwrap())
-    ///     .connect("localhost")?;
-    /// # std::io::Result::Ok(())
+    ///     .connect("localhost").await?;
+    /// # std::io::Result::Ok(()) }
     /// ```
     pub fn with_nkey<F>(nkey: &str, sig_cb: F) -> Options
     where
@@ -315,13 +324,15 @@ impl Options {
     ///
     /// # Example
     /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .client_cert("client-cert.pem", "client-key.pem")
-    ///     .connect("nats://localhost:4443")?;
+    ///     .connect("nats://localhost:4443").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn client_cert(mut self, cert: impl AsRef<Path>, key: impl AsRef<Path>) -> Options {
         self.client_cert = Some(cert.as_ref().to_owned());
         self.client_key = Some(key.as_ref().to_owned());
@@ -368,13 +379,15 @@ impl Options {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .with_name("My App")
-    ///     .connect("demo.nats.io")?;
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn with_name(mut self, name: &str) -> Options {
         self.name = Some(name.to_string());
         self
@@ -384,13 +397,15 @@ impl Options {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .no_echo()
-    ///     .connect("demo.nats.io")?;
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn no_echo(mut self) -> Options {
         self.no_echo = true;
         self
@@ -405,13 +420,15 @@ impl Options {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .max_reconnects(3)
-    ///     .connect("demo.nats.io")?;
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn max_reconnects<T: Into<Option<usize>>>(mut self, max_reconnects: T) -> Options {
         self.max_reconnects = max_reconnects.into();
         self
@@ -425,13 +442,15 @@ impl Options {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .reconnect_buffer_size(64 * 1024)
-    ///     .connect("demo.nats.io")?;
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn reconnect_buffer_size(mut self, reconnect_buffer_size: usize) -> Options {
         self.reconnect_buffer_size = reconnect_buffer_size;
         self
@@ -445,9 +464,10 @@ impl Options {
     /// # Example
     ///
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let options = nats::Options::new();
-    /// let nc = options.connect("demo.nats.io")?;
+    /// let nc = options.connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -460,9 +480,10 @@ impl Options {
     ///
     ///
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let options = nats::Options::new();
-    /// let nc = options.connect("nats://demo.nats.io:4222,tls://demo.nats.io:4443")?;
+    /// let nc = options.connect("nats://demo.nats.io:4222,tls://demo.nats.io:4443").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -476,13 +497,15 @@ impl Options {
     /// # Example
     ///
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .error_callback(|err| println!("connection received an error: {}", err))
-    ///     .connect("demo.nats.io")?;
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn error_callback<F>(mut self, cb: F) -> Self
     where
         F: Fn(Error) + Send + Sync + 'static,
@@ -497,13 +520,15 @@ impl Options {
     /// # Example
     ///
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .disconnect_callback(|| println!("connection has been lost"))
-    ///     .connect("demo.nats.io")?;
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn disconnect_callback<F>(mut self, cb: F) -> Self
     where
         F: Fn() + Send + Sync + 'static,
@@ -518,13 +543,15 @@ impl Options {
     /// # Example
     ///
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .reconnect_callback(|| println!("connection has been reestablished"))
-    ///     .connect("demo.nats.io")?;
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn reconnect_callback<F>(mut self, cb: F) -> Self
     where
         F: Fn() + Send + Sync + 'static,
@@ -540,14 +567,16 @@ impl Options {
     /// # Example
     ///
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .close_callback(|| println!("connection has been closed"))
-    ///     .connect("demo.nats.io")?;
-    /// nc.drain().unwrap();
+    ///     .connect("demo.nats.io").await?;
+    /// nc.drain().await.unwrap();
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn close_callback<F>(mut self, cb: F) -> Self
     where
         F: Fn() + Send + Sync + 'static,
@@ -562,14 +591,16 @@ impl Options {
     /// # Example
     ///
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .lame_duck_callback(|| println!("server entered lame duck mode"))
-    ///     .connect("demo.nats.io")?;
-    /// nc.drain().unwrap();
+    ///     .connect("demo.nats.io").await?;
+    /// nc.drain().await.unwrap();
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn lame_duck_callback<F>(mut self, cb: F) -> Self
     where
         F: Fn() + Send + Sync + 'static,
@@ -591,14 +622,16 @@ impl Options {
     /// # Example
     ///
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// # use std::time::Duration;
     /// let nc = nats::Options::new()
     ///     .reconnect_delay_callback(|c| Duration::from_millis(std::cmp::min((c * 100) as u64, 8000)))
-    ///     .connect("demo.nats.io")?;
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn reconnect_delay_callback<F>(mut self, cb: F) -> Self
     where
         F: Fn(usize) -> Duration + Send + Sync + 'static,
@@ -615,14 +648,15 @@ impl Options {
     ///
     /// # Examples
     /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
-    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .tls_required(true)
-    ///     .connect("tls://demo.nats.io:4443")?;
+    ///     .connect("tls://demo.nats.io:4443").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn tls_required(mut self, tls_required: bool) -> Options {
         self.tls_required = tls_required;
         self
@@ -634,14 +668,15 @@ impl Options {
     ///
     /// # Examples
     /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
-    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .add_root_certificate("my-certs.pem")
-    ///     .connect("tls://demo.nats.io:4443")?;
+    ///     .connect("tls://demo.nats.io:4443").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn add_root_certificate(mut self, path: impl AsRef<Path>) -> Options {
         self.certificates.push(path.as_ref().to_owned());
         self

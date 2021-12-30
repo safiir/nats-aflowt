@@ -105,7 +105,6 @@ pub struct Client {
 impl Client {
     /// Creates a new client that will begin connecting in the background.
     pub(crate) async fn connect(url: &str, options: Options) -> io::Result<Client> {
-        crate::tokio_console_init();
         // A channel for coordinating flushes.
         //let (flush_kicker, flush_wanted) = channel::bounded(1);
         let (flush_kicker, mut flush_wanted) = tokio::sync::mpsc::channel(1);
@@ -150,7 +149,6 @@ impl Client {
         let client = _client.clone();
         tokio::spawn(async move {
             {
-                // TODO(ss): review that this works after conversion to async
                 let res = client.run(connector).await;
                 run_sender.send(res).ok();
 
@@ -191,58 +189,57 @@ impl Client {
 
             // Wait until at least one message is buffered.
             loop {
-                match tokio::time::timeout(PING_INTERVAL, flush_wanted.recv()).await {
-                    Ok(_) => {
-                        let since = last.elapsed();
-                        if since < MIN_FLUSH_BETWEEN {
-                            tokio::time::sleep(MIN_FLUSH_BETWEEN - since).await;
-                        }
+                if tokio::time::timeout(PING_INTERVAL, flush_wanted.recv())
+                    .await
+                    .is_ok()
+                {
+                    let since = last.elapsed();
+                    if since < MIN_FLUSH_BETWEEN {
+                        tokio::time::sleep(MIN_FLUSH_BETWEEN - since).await;
+                    }
 
-                        // Flush the writer.
-                        let mut write = client.state.write.lock().await;
+                    // Flush the writer.
+                    let mut write = client.state.write.lock().await;
+                    if let Some(writer) = write.writer.as_mut() {
+                        // If flushing fails, disconnect.
+                        if writer.flush().await.is_err() {
+                            last = Instant::now();
+                            let _ = writer.shutdown().await;
+                            write.writer = None;
+                            let mut read = client.state.read.lock().await;
+                            read.pongs.clear();
+                        }
+                    }
+                    drop(write);
+                } else {
+                    // timeout
+                    let mut write = client.state.write.lock().await;
+                    let mut read = client.state.read.lock().await;
+
+                    if read.pings_out >= MAX_PINGS_OUT {
                         if let Some(writer) = write.writer.as_mut() {
-                            // If flushing fails, disconnect.
-                            if let Err(_) = writer.flush().await {
-                                last = Instant::now();
-                                let _ = writer.shutdown().await;
+                            writer.get_mut().shutdown().await;
+                        }
+                        write.writer = None;
+                        read.pongs.clear();
+                    } else if read.last_active.elapsed() > PING_INTERVAL {
+                        read.pings_out += 1;
+                        read.pongs.push_back(write.flush_kicker.clone());
+                        // Send out a PING here.
+                        if let Some(mut writer) = write.writer.as_mut() {
+                            // Ok to ignore errors here.
+                            let _ = proto::encode(&mut writer, ClientOp::Ping).await;
+                            if writer.flush().await.is_err() {
+                                // NB see locking protocol for state.write and state.read
+                                writer.shutdown().await.ok();
                                 write.writer = None;
-                                let mut read = client.state.read.lock().await;
                                 read.pongs.clear();
                             }
                         }
-                        drop(write);
                     }
 
-                    // timeout
-                    Err(_) => {
-                        let mut write = client.state.write.lock().await;
-                        let mut read = client.state.read.lock().await;
-
-                        if read.pings_out >= MAX_PINGS_OUT {
-                            if let Some(writer) = write.writer.as_mut() {
-                                writer.get_mut().shutdown().await;
-                            }
-                            write.writer = None;
-                            read.pongs.clear();
-                        } else if read.last_active.elapsed() > PING_INTERVAL {
-                            read.pings_out += 1;
-                            read.pongs.push_back(write.flush_kicker.clone());
-                            // Send out a PING here.
-                            if let Some(mut writer) = write.writer.as_mut() {
-                                // Ok to ignore errors here.
-                                let _ = proto::encode(&mut writer, ClientOp::Ping).await;
-                                if let Err(_) = writer.flush().await {
-                                    // NB see locking protocol for state.write and state.read
-                                    writer.shutdown().await.ok();
-                                    write.writer = None;
-                                    read.pongs.clear();
-                                }
-                            }
-                        }
-
-                        drop(read);
-                        drop(write);
-                    }
+                    drop(read);
+                    drop(write);
                 }
             }
         });

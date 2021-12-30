@@ -46,7 +46,7 @@ impl Drop for Inner {
     }
 }
 
-/// Wrapper around tokio::sync::mpsc::Receiver that provides interior mutability
+/// Wrapper around `tokio::sync::mpsc::Receiver` that provides interior mutability
 #[derive(Debug)]
 pub struct Receiver<T> {
     inner: Mutex<tokio::sync::mpsc::Receiver<T>>,
@@ -106,11 +106,12 @@ impl Subscription {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// # let sub1 = nc.subscribe("foo")?;
-    /// # let sub2 = nc.subscribe("bar")?;
-    /// # nc.publish("foo", "hello")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let sub1 = nc.subscribe("foo").await?;
+    /// # let sub2 = nc.subscribe("bar").await?;
+    /// # nc.publish("foo", "hello").await?;
     /// let sub1_ch = sub1.receiver();
     /// let sub2_ch = sub2.receiver();
     /// tokio::select! {
@@ -134,11 +135,12 @@ impl Subscription {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// # let sub = nc.subscribe("foo")?;
-    /// # nc.publish("foo", "hello")?;
-    /// if let Some(msg) = sub.next() {}
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let sub = nc.subscribe("foo").await?;
+    /// # nc.publish("foo", "hello").await?;
+    /// if let Some(msg) = sub.next().await {}
     /// # Ok(())
     /// # }
     /// ```
@@ -152,10 +154,11 @@ impl Subscription {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// # let sub = nc.subscribe("foo")?;
-    /// if let Some(msg) = sub.try_next() {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let sub = nc.subscribe("foo").await?;
+    /// if let Some(msg) = sub.try_next().await {
     ///   println!("Received {}", msg);
     /// }
     /// # Ok(())
@@ -170,10 +173,11 @@ impl Subscription {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// # let sub = nc.subscribe("foo")?;
-    /// if let Ok(msg) = sub.next_timeout(std::time::Duration::from_secs(1)) {}
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let sub = nc.subscribe("foo").await?;
+    /// if let Ok(msg) = sub.next_timeout(std::time::Duration::from_secs(1)).await {}
     /// # Ok(())
     /// # }
     /// ```
@@ -196,10 +200,12 @@ impl Subscription {
     ///
     /// # Example
     /// ```no_run
-    /// use futures_util::pin_mut;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// # let sub = nc.subscribe("foo")?;
+    /// # use pin_utils::pin_mut;
+    /// use futures::stream::StreamExt;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let sub = nc.subscribe("foo").await?;
     /// let stream = sub.messages();
     /// pin_mut!(stream); // needed for iteration
     /// while let Some(msg) = stream.next().await {
@@ -220,10 +226,12 @@ impl Subscription {
     ///
     /// # Example
     /// ```no_run
-    /// use futures_util::pin_mut;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// # let sub = nc.subscribe("foo")?;
+    /// # use pin_utils::pin_mut;
+    /// use futures::stream::StreamExt;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let sub = nc.subscribe("foo").await?;
     /// let stream = sub.stream();
     /// pin_mut!(stream); // needed for iteration
     /// while let Some(msg) = stream.next().await {
@@ -244,9 +252,10 @@ impl Subscription {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// nc.subscribe("bar")?.with_handler(move |msg| {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// nc.subscribe("bar").await?.with_handler(move |msg| {
     ///     println!("Received {}", &msg);
     ///     Ok(())
     /// });
@@ -276,16 +285,51 @@ impl Subscription {
         Handler { sub: self }
     }
 
+    /// Attach an async closure to handle messages. The closure will run as a task
+    /// within the current thread and must not be blocking.
+    /// Any errors returned by the closure will be logged.
+    /// A `Handler` will not unregister interest with
+    /// the server when `drop(&mut self)` is called.
+    ///
+    /// # Example
+    /// ```
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// let sub = nc.subscribe("foo").await?
+    ///      .with_async_handler( async move |m| { m.respond("ans=42").await?; Ok(()) });
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[allow(clippy::return_self_not_must_use)]
+    pub fn with_async_handler<F, T>(self, handler: F) -> Self
+    where
+        F: Fn(Message) -> T + 'static + Send + Sync,
+        T: futures::Future<Output = io::Result<()>> + Send,
+    {
+        let sub = self.clone();
+        tokio::spawn(async move {
+            while let Some(m) = sub.next().await {
+                if let Err(e) = handler(m).await {
+                    // TODO(dlc) - Capture for last error?
+                    log::error!("Error in callback! {:?}", e);
+                }
+            }
+        });
+        self
+    }
+
     /// Unsubscribe a subscription immediately without draining.
     /// Use `drain` instead if you want any pending messages
     /// to be processed by a handler, if one is configured.
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// let sub = nc.subscribe("foo")?;
-    /// sub.unsubscribe()?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// let sub = nc.subscribe("foo").await?;
+    /// sub.unsubscribe().await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -303,10 +347,11 @@ impl Subscription {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// let sub = nc.subscribe("foo")?;
-    /// sub.close()?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// let sub = nc.subscribe("foo").await?;
+    /// sub.close().await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -334,20 +379,16 @@ impl Subscription {
     /// # use std::sync::{Arc, atomic::{AtomicBool, Ordering::SeqCst}};
     /// # use std::thread;
     /// # use std::time::Duration;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// let mut sub = nc.subscribe("test.drain").await?;
     ///
-    /// let mut sub = nc.subscribe("test.drain")?;
+    /// nc.publish("test.drain", "message").await?;
+    /// sub.drain().await?;
     ///
-    /// nc.publish("test.drain", "message")?;
-    /// sub.drain()?;
-    ///
-    /// let mut received = false;
-    /// for _ in sub {
-    ///     received = true;
-    /// }
-    ///
-    /// assert!(received);
+    /// let has_item = sub.next().await.is_some();
+    /// assert!(has_item);
     ///
     /// # Ok(())
     /// # }
@@ -369,13 +410,14 @@ impl Handler {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// let sub = nc.subscribe("foo")?.with_handler(move |msg| {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// let sub = nc.subscribe("foo").await?.with_handler(move |msg| {
     ///     println!("Received {}", &msg);
     ///     Ok(())
     /// });
-    /// sub.unsubscribe()?;
+    /// sub.unsubscribe().await?;
     /// # Ok(())
     /// # }
     /// ```

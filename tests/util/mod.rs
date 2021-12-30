@@ -104,7 +104,7 @@ pub fn run_server(cfg: &str) -> Server {
         .arg("-l")
         .arg(logfile.as_os_str());
 
-    if cfg != "" {
+    if !cfg.is_empty() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         cmd.arg("-c").arg(path.join(cfg));
     }

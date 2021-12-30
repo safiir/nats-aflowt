@@ -15,10 +15,10 @@ use std::fs;
 use std::io::{self, prelude::*};
 use std::path::Path;
 
+use crate::tokio_rustls::rustls::{Certificate, PrivateKey};
 use nkeys::KeyPair;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use crate::tokio_rustls::rustls::{Certificate,PrivateKey};
 
 use crate::SecureString;
 
@@ -150,7 +150,7 @@ pub(crate) fn load_certs(path: &Path) -> io::Result<Vec<Certificate>> {
         path,
         "-----BEGIN CERTIFICATE-----",
         "-----END CERTIFICATE-----",
-        &|v| Certificate(v),
+        &Certificate,
     )
 }
 
@@ -160,7 +160,7 @@ pub(crate) fn load_key(path: &Path) -> io::Result<PrivateKey> {
         path,
         "-----BEGIN PRIVATE KEY-----",
         "-----END PRIVATE KEY-----",
-        &|v| PrivateKey(v),
+        &PrivateKey,
     )?;
     if keys.is_empty() {
         return Err(io::Error::new(

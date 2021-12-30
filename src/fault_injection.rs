@@ -20,7 +20,6 @@ use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 /// trigger cross-thread communication, shaking out more possible interleavings
 /// quickly. It gets fully eliminated by the compiler in non-test code.
 pub async fn inject_delay() {
-    use std::thread;
     use std::time::Duration;
 
     static GLOBAL_DELAYS: AtomicUsize = AtomicUsize::new(0);

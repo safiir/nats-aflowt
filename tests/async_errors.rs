@@ -1,20 +1,26 @@
 mod util;
 pub use util::*;
 
-/*
-// TODO: FIXME: fix compilation
 #[tokio::test]
 async fn pub_perms() {
     use std::time::Duration;
 
     let s = util::run_server("tests/configs/perms.conf");
-    let (dtx, drx) = tokio::sync::oneshot::channel();
-    let (etx, erx) = tokio::sync::oneshot::channel();
+    let (dtx, mut drx) = tokio::sync::mpsc::channel(1);
+    let (etx, mut erx) = tokio::sync::mpsc::channel(1);
 
     let nc = nats::Options::with_user_pass("derek", "s3cr3t!")
-        .error_callback(move |err| etx.send(err).unwrap())
+        .error_callback(move |err| {
+            let etx = etx.clone();
+            let _ = tokio::spawn(async move {
+                etx.send(err).await.unwrap();
+            });
+        })
         .disconnect_callback(move || {
-            let _ = dtx.send(true);
+            let dtx = dtx.clone();
+            let _ = tokio::spawn(async move {
+                dtx.send(true).await.unwrap();
+            });
         })
         .connect(&s.client_url())
         .await
@@ -23,30 +29,40 @@ async fn pub_perms() {
     nc.publish("foo", "NOT ALLOWED").await.unwrap();
     let r = tokio::time::timeout(Duration::from_millis(100), erx.recv())
         .await
-        .expect("no timeout");
-    assert!(r.is_ok(), "expected an error callback, got none");
+        .expect("erx timeout");
+    assert!(
+        r.is_some(),
+        "expected an error callback, got closed connection"
+    );
     assert_eq!(
         r.unwrap().to_string(),
         r#"Permissions Violation for Publish to "foo""#
     );
 
-    let r = tokio::time::timeout(Duration::from_millis(100), drx.recv())
-        .await
-        .expect("no timeout");
+    let r = tokio::time::timeout(Duration::from_millis(100), drx.recv()).await;
     assert!(r.is_err(), "we got disconnected on perm violation");
 }
 
 #[tokio::test]
 async fn sub_perms() {
-    let s = util::run_server("tests/configs/perms.conf");
+    use std::time::Duration;
 
-    let (dtx, drx) = bounded(1);
-    let (etx, erx) = bounded(1);
+    let s = util::run_server("tests/configs/perms.conf");
+    let (dtx, mut drx) = tokio::sync::mpsc::channel(1);
+    let (etx, mut erx) = tokio::sync::mpsc::channel(1);
 
     let nc = nats::Options::with_user_pass("derek", "s3cr3t!")
-        .error_callback(move |err| etx.send(err).unwrap())
+        .error_callback(move |err| {
+            let etx = etx.clone();
+            let _ = tokio::spawn(async move {
+                etx.send(err).await.unwrap();
+            });
+        })
         .disconnect_callback(move || {
-            let _ = dtx.send(true);
+            let dtx = dtx.clone();
+            let _ = tokio::spawn(async move {
+                dtx.send(true).await.unwrap();
+            });
         })
         .connect(&s.client_url())
         .await
@@ -54,14 +70,15 @@ async fn sub_perms() {
 
     let _sub = nc.subscribe("foo").await.unwrap();
 
-    let r = erx.recv_timeout(Duration::from_millis(100));
-    assert!(r.is_ok(), "expected an error callback, got none");
+    let r = tokio::time::timeout(Duration::from_millis(100), erx.recv())
+        .await
+        .expect("erx timeout");
+    assert!(r.is_some(), "expected an error callback, got none");
     assert_eq!(
         r.unwrap().to_string(),
         r#"Permissions Violation for Subscription to "foo""#
     );
 
-    let r = drx.recv_timeout(Duration::from_millis(100));
+    let r = tokio::time::timeout(Duration::from_millis(100), drx.recv()).await;
     assert!(r.is_err(), "we got disconnected on perm violation");
 }
- */

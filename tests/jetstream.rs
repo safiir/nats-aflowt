@@ -1,3 +1,4 @@
+use pin_utils::pin_mut;
 use std::{collections::HashSet, io, iter::FromIterator, time::Duration};
 use tokio_stream::StreamExt;
 
@@ -20,8 +21,7 @@ async fn jetstream_not_enabled() {
         .into_inner()
         .expect("should be able to convert error into inner")
         .downcast::<jetstream::Error>()
-        .expect("should be able to downcast into error")
-        .to_owned();
+        .expect("should be able to downcast into error");
 
     assert_eq!(err.error_code(), jetstream::ErrorCode::NotEnabled);
 }
@@ -40,8 +40,7 @@ async fn jetstream_account_not_enabled() {
         .into_inner()
         .expect("should be able to convert error into inner")
         .downcast::<jetstream::Error>()
-        .expect("should be able to downcast into jetstream::Error")
-        .to_owned();
+        .expect("should be able to downcast into jetstream::Error");
 
     assert_eq!(err.error_code(), jetstream::ErrorCode::NotEnabledForAccount);
 }
@@ -159,7 +158,7 @@ async fn jetstream_publish() {
         .unwrap();
 
     assert_eq!(ack.stream, "TEST");
-    assert_eq!(ack.duplicate, true);
+    assert!(ack.duplicate);
     assert_eq!(ack.sequence, 2);
     assert_eq!(js.stream_info("TEST").await.unwrap().state.messages, 2);
 
@@ -336,7 +335,7 @@ async fn jetstream_basics() -> io::Result<()> {
         nc.publish("test2", format!("{}", i)).await?;
     }
 
-    assert_eq!(js.stream_info("test2").await?.state.messages, 1000);
+    assert_eq!(js.stream_info("test2").await?.state.messages, 100);
 
     let mut consumer1 = js.existing("test2", "consumer1").await?;
 
@@ -371,20 +370,26 @@ async fn jetstream_basics() -> io::Result<()> {
     js.existing("test2", "consumer3").await?;
 
     // cleanup
-    let streams: io::Result<Vec<StreamInfo>> = js.list_streams().collect().await;
-
-    for stream in streams?.iter() {
-        let consumers: PagedIterator<ConsumerInfo> = js.list_consumers(&stream.config.name)?;
-        //let consumers: Vec<ConsumerInfo> = consumers.collect();
+    let streams: Vec<StreamInfo> = js.list_streams().filter_map(|s| s.ok()).collect().await;
+    for stream in streams.iter() {
+        let consumers = js.list_consumers(&stream.config.name)?;
+        pin_mut!(consumers);
+        while let Some(cres) = consumers.next().await {
+            let consumer = cres?;
+            js.delete_consumer(&stream.config.name, &consumer.name)
+                .await?;
+        }
+        /*
         for consumer in consumers
             .collect::<Vec<Result<ConsumerInfo, io::Error>>>()
-            .await
+            .into_iter()
         {
             if let Ok(consumer) = consumer {
                 js.delete_consumer(&stream.config.name, &consumer.name)
                     .await?;
             }
         }
+         */
 
         js.purge_stream(&stream.config.name).await?;
 

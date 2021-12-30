@@ -1,4 +1,3 @@
-use nats;
 use pin_utils::pin_mut;
 use serde::{Deserialize, Serialize};
 

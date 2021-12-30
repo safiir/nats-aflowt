@@ -18,13 +18,14 @@
 //! Create a new stream with default options:
 //!
 //! ```no_run
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let nc = nats::connect("my_server::4222")?;
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let nc = nats::connect("my_server::4222").await?;
 //! let js = nats::jetstream::new(nc);
 //!
 //! // add_stream converts a str into a
 //! // default `StreamConfig`.
-//! js.add_stream("my_stream")?;
+//! js.add_stream("my_stream").await?;
 //!
 //! # Ok(()) }
 //! ```
@@ -32,10 +33,11 @@
 //! Add a new stream with specific options set:
 //!
 //! ```no_run
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use nats::jetstream::{StreamConfig, StorageType};
 //!
-//! let nc = nats::connect("my_server::4222")?;
+//! let nc = nats::connect("my_server::4222").await?;
 //! let js = nats::jetstream::new(nc);
 //!
 //! js.add_stream(StreamConfig {
@@ -43,7 +45,7 @@
 //!     max_bytes: 5 * 1024 * 1024 * 1024,
 //!     storage: StorageType::Memory,
 //!     ..Default::default()
-//! })?;
+//! }).await?;
 //!
 //! # Ok(()) }
 //! ```
@@ -51,13 +53,14 @@
 //! Create and use a new default consumer (defaults to Pull-based, see the docs for [`ConsumerConfig`](struct.ConsumerConfig.html) for how this influences behavior)
 //!
 //! ```no_run
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let nc = nats::connect("my_server::4222")?;
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let nc = nats::connect("my_server::4222").await?;
 //! let js = nats::jetstream::new(nc);
 //!
-//! js.add_stream("my_stream")?;
+//! js.add_stream("my_stream").await?;
 //!
-//! let consumer: nats::jetstream::Consumer = js.add_consumer("my_stream", "my_consumer")?;
+//! let consumer: nats::jetstream::Consumer = js.add_consumer("my_stream", "my_consumer").await?;
 //!
 //! # Ok(()) }
 //! ```
@@ -65,20 +68,21 @@
 //! Create and use a new push-based consumer with batched acknowledgements
 //!
 //! ```no_run
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use nats::jetstream::{AckPolicy, ConsumerConfig};
 //!
-//! let nc = nats::connect("my_server::4222")?;
+//! let nc = nats::connect("my_server::4222").await?;
 //! let js = nats::jetstream::new(nc);
 //!
-//! js.add_stream("my_stream")?;
+//! js.add_stream("my_stream").await?;
 //!
 //! let consumer: nats::jetstream::Consumer = js.add_consumer("my_stream", ConsumerConfig {
 //!     durable_name: Some("my_consumer".to_string()),
 //!     deliver_subject: Some("my_push_consumer_subject".to_string()),
 //!     ack_policy: AckPolicy::All,
 //!     ..Default::default()
-//! })?;
+//! }).await?;
 //!
 //! # Ok(()) }
 //! ```
@@ -87,33 +91,35 @@
 //! `existing` if you do not wish to auto-create them.
 //!
 //! ```no_run
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use nats::jetstream::{AckPolicy, Consumer, ConsumerConfig};
 //!
-//! let nc = nats::connect("my_server::4222")?;
+//! let nc = nats::connect("my_server::4222").await?;
 //! let js = nats::jetstream::new(nc);
 //!
-//! let consumer_res = js.existing("my_stream", "non-existent_consumer");
+//! let consumer_res = js.existing("my_stream", "non-existent_consumer").await;
 //!
 //! // trying to use this consumer will fail because it hasn't been created yet
 //! assert!(consumer_res.is_err());
 //!
 //! // this will create the consumer if it does not exist already
-//! let consumer = js.create_or_bind("my_stream", "existing_or_created_consumer")?;
+//! let consumer = js.create_or_bind("my_stream", "existing_or_created_consumer").await?;
 //! # Ok(()) }
 //! ```
 //!
 //! Consumers may be used for processing messages individually, with timeouts, or in batches:
 //!
 //! ```no_run
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use nats::jetstream::{AckPolicy, Consumer, ConsumerConfig};
 //!
-//! let nc = nats::connect("my_server::4222")?;
+//! let nc = nats::connect("my_server::4222").await?;
 //! let js = nats::jetstream::new(nc);
 //!
 //! // this will create the consumer if it does not exist already.
-//! let mut consumer = js.create_or_bind("my_stream", "existing_or_created_consumer")?;
+//! let mut consumer = js.create_or_bind("my_stream", "existing_or_created_consumer").await?;
 //!
 //! // The `Consumer::process` method executes a closure
 //! // on both push- and pull-based consumers, and if
@@ -123,7 +129,7 @@
 //! let msg_data_len: usize = consumer.process(|msg| {
 //!     println!("got message {:?}", msg);
 //!     Ok(msg.data.len())
-//! })?;
+//! }).await?;
 //!
 //! // Similar to `Consumer::process` except wait until the
 //! // consumer's `timeout` field for the message to arrive.
@@ -132,7 +138,7 @@
 //! let msg_data_len: usize = consumer.process_timeout(|msg| {
 //!     println!("got message {:?}", msg);
 //!     Ok(msg.data.len())
-//! })?;
+//! }).await?;
 //!
 //! // For consumers operating with `AckPolicy::All`, batch
 //! // processing can provide nice throughput optimizations.
@@ -150,7 +156,7 @@
 //! let results: Vec<std::io::Result<usize>> = consumer.process_batch(batch_size, |msg| {
 //!     println!("got message {:?}", msg);
 //!     Ok(msg.data.len())
-//! });
+//! }).await;
 //! let flipped: std::io::Result<Vec<usize>> = results.into_iter().collect();
 //! let sizes: Vec<usize> = flipped?;
 //!
@@ -159,12 +165,12 @@
 //! // there are a number of lower level primitives that
 //! // can be used, such as `Consumer::pull` for pull-based
 //! // consumers and `Message::ack` for manually acking things:
-//! let msg = consumer.pull()?;
+//! let msg = consumer.pull().await?;
 //!
 //! // --- process message ---
 //!
 //! // tell the server the message has been processed
-//! msg.ack()?;
+//! msg.ack().await?;
 //!
 //! # Ok(()) }
 //! ```
@@ -177,10 +183,8 @@ use std::{
     convert::TryFrom,
     error, fmt,
     fmt::Debug,
-    future::Future,
     io::{self, ErrorKind},
     pin::Pin,
-    task::{Context, Poll},
     time::Duration,
 };
 use tokio_stream::Stream;
@@ -220,7 +224,7 @@ impl JetStreamOptions {
     /// # Example
     ///
     /// ```
-    /// let options = nats::JetStreamOptions::new();
+    /// let options = nats::jetstream::JetStreamOptions::new();
     /// ```
     pub fn new() -> JetStreamOptions {
         JetStreamOptions::default()
@@ -231,9 +235,10 @@ impl JetStreamOptions {
     /// # Example
     ///
     /// ```
-    /// let options = nats::JetStreamOptions::new()
+    /// let options = nats::jetstream::JetStreamOptions::new()
     ///     .api_prefix("some_exported_prefix".to_string());
     /// ```
+    #[must_use]
     pub fn api_prefix(mut self, mut api_prefix: String) -> Self {
         if !api_prefix.ends_with('.') {
             api_prefix.push('.');
@@ -248,9 +253,10 @@ impl JetStreamOptions {
     /// # Example
     ///
     /// ```
-    /// let options = nats::JetStreamOptions::new()
+    /// let options = nats::jetstream::JetStreamOptions::new()
     ///   .domain("some_domain");
     /// ```
+    #[must_use]
     pub fn domain(self, domain: &str) -> Self {
         if domain.is_empty() {
             self.api_prefix("".to_string())
@@ -555,6 +561,46 @@ pub struct PagedIterator<'a, T> {
     done: bool,
 }
 
+impl<'x, 'y, 'z: 'x, T: 'x> PagedIterator<'z, T>
+where
+    T: DeserializeOwned + Debug,
+{
+    fn to_stream(mut self: Pin<Box<Self>>) -> impl Stream<Item = io::Result<T>> + 'x {
+        async_stream::try_stream! {
+            if !self.done {
+                if !self.items.is_empty() {
+                    yield self.items.pop_front().unwrap();
+                }
+                let req = serde_json::ser::to_vec(&PagedRequest {
+                    offset: self.offset,
+                })
+                .unwrap();
+                let mut page: PagedResponse<T> =
+                    match self.manager.js_request(&self.subject, &req).await {
+                        Ok(page) => page,
+                        Err(e) => {
+                            (*self).done = true;
+                            Err(e)?
+                        }
+                    };
+                if page.items.is_none() {
+                    (*self).done = true;
+                } else {
+                    let items = page.items.take().unwrap();
+                    (*self).offset += i64::try_from(items.len()).unwrap();
+                    (*self).items = items;
+                    if self.items.is_empty() {
+                        (*self).done = true;
+                    } else {
+                        yield self.items.pop_front().unwrap()
+                    }
+                }
+            }
+        }
+    }
+}
+
+/*
 impl<T> Stream for PagedIterator<'_, T>
 where
     T: DeserializeOwned + Debug,
@@ -562,16 +608,20 @@ where
     type Item = io::Result<T>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        eprintln!("pi poll 0");
         if self.done {
+            eprintln!("pi poll Done");
             return Poll::Ready(None);
         }
         if !self.items.is_empty() {
+            eprintln!("pi poll not empty, returning item");
             return Poll::Ready(Some(Ok(self.items.pop_front().unwrap())));
         }
         let req = serde_json::ser::to_vec(&PagedRequest {
             offset: self.offset,
         })
         .unwrap();
+        eprintln!("pi poll requesting more");
         let fut = self.manager.js_request(&self.subject, &req);
         let next_poll: Poll<io::Result<PagedResponse<T>>> = Pin::new(&mut Box::pin(fut)).poll(cx);
         let mut page: PagedResponse<T> = match next_poll {
@@ -605,6 +655,7 @@ where
         }
     }
 }
+ */
 
 /// A context for performing `JetStream` operations.
 #[derive(Clone, Debug)]
@@ -776,29 +827,34 @@ impl JetStream {
 
     /// List all `JetStream` stream names. If you also want stream information,
     /// use the `list_streams` method instead.
-    pub fn stream_names(&self) -> PagedIterator<'_, String> {
-        PagedIterator {
+    pub fn stream_names(&self) -> impl Stream<Item = io::Result<String>> + '_ {
+        Box::pin(PagedIterator {
             subject: format!("{}STREAM.NAMES", self.api_prefix()),
             manager: self,
             offset: 0,
             items: Default::default(),
             done: false,
-        }
+        })
+        .to_stream()
     }
 
     /// List all `JetStream` streams.
-    pub fn list_streams(&self) -> PagedIterator<'_, StreamInfo> {
-        PagedIterator {
+    pub fn list_streams(&self) -> impl Stream<Item = io::Result<StreamInfo>> + '_ {
+        Box::pin(PagedIterator {
             subject: format!("{}STREAM.LIST", self.api_prefix()),
             manager: self,
             offset: 0,
             items: Default::default(),
             done: false,
-        }
+        })
+        .to_stream()
     }
 
     /// List `JetStream` consumers for a stream.
-    pub fn list_consumers<S>(&self, stream: S) -> io::Result<PagedIterator<'_, ConsumerInfo>>
+    pub fn list_consumers<S>(
+        &self,
+        stream: S,
+    ) -> io::Result<impl Stream<Item = io::Result<ConsumerInfo>> + '_>
     where
         S: AsRef<str>,
     {
@@ -811,13 +867,14 @@ impl JetStream {
         }
         let subject: String = format!("{}CONSUMER.LIST.{}", self.api_prefix(), stream);
 
-        Ok(PagedIterator {
+        Ok(Box::pin(PagedIterator {
             subject,
             manager: self,
             offset: 0,
             items: Default::default(),
             done: false,
         })
+        .to_stream())
     }
 
     /// Query `JetStream` stream information.

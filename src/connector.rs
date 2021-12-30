@@ -476,6 +476,7 @@ pub(crate) struct NatsStream {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 enum Flavor {
     Tcp(Mutex<TcpStream>),
     Tls(Mutex<TlsStream<TcpStream>>), //Tls(Box<Mutex<TlsStream<TcpStream>>>),
@@ -546,20 +547,20 @@ impl AsyncRead for NatsStream {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        mut buf: &mut ReadBuf<'_>,
+        buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         let flavor: &Flavor = self.flavor.borrow();
         match flavor {
             Flavor::Tcp(tcp) => {
                 if let Ok(mut guard) = tcp.try_lock() {
-                    Pin::new(guard.deref_mut()).poll_read(cx, &mut buf)
+                    Pin::new(guard.deref_mut()).poll_read(cx, buf)
                 } else {
                     Poll::Pending
                 }
             }
             Flavor::Tls(tls) => {
                 if let Ok(mut guard) = tls.try_lock() {
-                    Pin::new(guard.deref_mut()).poll_read(cx, &mut buf)
+                    Pin::new(guard.deref_mut()).poll_read(cx, buf)
                 } else {
                     Poll::Pending
                 }

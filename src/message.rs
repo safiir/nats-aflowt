@@ -191,6 +191,7 @@ impl Message {
             }
             if sub
                 .next_timeout(std::time::Duration::from_millis(100))
+                .await
                 .is_ok()
             {
                 self.double_acked.store(true, Ordering::Release);
