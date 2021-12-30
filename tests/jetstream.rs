@@ -335,7 +335,7 @@ async fn jetstream_basics() -> io::Result<()> {
         nc.publish("test2", format!("{}", i)).await?;
     }
 
-    assert_eq!(js.stream_info("test2").await?.state.messages, 100);
+    assert_eq!(js.stream_info("test2").await?.state.messages, 1000);
 
     let mut consumer1 = js.existing("test2", "consumer1").await?;
 
@@ -379,18 +379,6 @@ async fn jetstream_basics() -> io::Result<()> {
             js.delete_consumer(&stream.config.name, &consumer.name)
                 .await?;
         }
-        /*
-        for consumer in consumers
-            .collect::<Vec<Result<ConsumerInfo, io::Error>>>()
-            .into_iter()
-        {
-            if let Ok(consumer) = consumer {
-                js.delete_consumer(&stream.config.name, &consumer.name)
-                    .await?;
-            }
-        }
-         */
-
         js.purge_stream(&stream.config.name).await?;
 
         assert_eq!(js.stream_info(&stream.config.name).await?.state.messages, 0);
