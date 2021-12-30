@@ -60,7 +60,7 @@ impl<T> Receiver<T> {
         receiver.recv().await
     }
 
-    /// Return Some(message) if a message is avaialable,
+    /// Return Some(message) if a message is available,
     /// or None if there are no messages available,
     /// or the subscription has been closed or client disconnected.
     pub async fn try_recv(&self) -> Option<T> {
@@ -281,7 +281,7 @@ impl Subscription {
                     }
                 })
             })
-            .expect("threads should be spawnable");
+            .expect("threads should be spawn-able");
         Handler { sub: self }
     }
 
