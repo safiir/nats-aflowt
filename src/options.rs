@@ -31,7 +31,6 @@ pub struct Options {
     pub(crate) auth: AuthStyle,
     pub(crate) name: Option<String>,
     pub(crate) no_echo: bool,
-    pub(crate) retry_on_failed_connect: bool,
     pub(crate) max_reconnects: Option<usize>,
     pub(crate) reconnect_buffer_size: usize,
     pub(crate) tls_required: bool,
@@ -56,7 +55,6 @@ impl fmt::Debug for Options {
             .entry(&"auth", &self.auth)
             .entry(&"name", &self.name)
             .entry(&"no_echo", &self.no_echo)
-            .entry(&"retry_on_failed_connect", &self.retry_on_failed_connect)
             .entry(&"reconnect_buffer_size", &self.reconnect_buffer_size)
             .entry(&"max_reconnects", &self.max_reconnects)
             .entry(&"tls_required", &self.tls_required)
@@ -80,7 +78,6 @@ impl Default for Options {
             auth: AuthStyle::NoAuth,
             name: None,
             no_echo: false,
-            retry_on_failed_connect: false,
             reconnect_buffer_size: 8 * 1024 * 1024,
             max_reconnects: Some(60),
             tls_required: false,
@@ -419,28 +416,6 @@ impl Options {
     #[must_use]
     pub fn no_echo(mut self) -> Options {
         self.no_echo = true;
-        self
-    }
-
-    /// Select option to enable reconnect with backoff
-    /// on first failed connection attempt.
-    /// The reconnect logic with `max_reconnects` and the
-    /// `reconnect_delay_callback` will be specified the same
-    /// as before but will be invoked on the first failed
-    /// connection attempt.
-    ///
-    /// # Example
-    /// ```
-    /// # #[tokio::main]
-    /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::Options::new()
-    ///     .retry_on_failed_connect()
-    ///     .connect("demo.nats.io").await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn retry_on_failed_connect(mut self) -> Options {
-        self.retry_on_failed_connect = true;
         self
     }
 

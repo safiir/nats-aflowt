@@ -802,10 +802,11 @@ pub struct Keys {
 
 impl Keys {
     pub fn stream(self) -> Pin<Box<dyn Stream<Item = String>>> {
-        Box::pin(self.as_stream())
+        Box::pin(self.into_stream())
     }
 
-    fn as_stream(mut self) -> impl Stream<Item = String> {
+    #[doc(hidden)]
+    fn into_stream(mut self) -> impl Stream<Item = String> {
         async_stream::stream! {
             if !self.done {
                 while let Some(message) = self.subscription.next().await {
@@ -851,10 +852,10 @@ pub struct History {
 
 impl History {
     pub fn stream(self) -> Pin<Box<dyn Stream<Item = Entry>>> {
-        Box::pin(self.as_stream())
+        Box::pin(self.into_stream())
     }
 
-    fn as_stream(mut self) -> impl Stream<Item = Entry> {
+    fn into_stream(mut self) -> impl Stream<Item = Entry> {
         async_stream::stream! {
             if !self.done {
                 while let Some(message) = self.subscription.next().await {
@@ -900,10 +901,11 @@ pub struct Watch {
 
 impl Watch {
     pub fn stream(self) -> Pin<Box<dyn Stream<Item = Entry>>> {
-        Box::pin(self.as_stream())
+        Box::pin(self.into_stream())
     }
 
-    fn as_stream(mut self) -> impl Stream<Item = Entry> {
+    #[doc(hidden)]
+    fn into_stream(mut self) -> impl Stream<Item = Entry> {
         async_stream::stream! {
                 while let Some(message) = self.subscription.next().await {
                     if let Some(info) = message.jetstream_message_info() {

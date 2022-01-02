@@ -593,7 +593,7 @@ impl crate::client::Preprocessor for SubscriptionPreprocessor {
                             .await;
                     }
                 }
-                false;
+                return false;
             }
 
             // Track messages for sequence mismatches.
