@@ -543,18 +543,12 @@ struct SubscriptionPreprocessor {
 impl crate::client::Preprocessor for SubscriptionPreprocessor {
     fn process<'proc>(&'proc self, sid: u64, message: &'proc Message) -> BoxFuture<'proc, bool> {
         Box::pin(async move {
-            eprintln!(
-                "DBG: subscription preprocessor sid {}, message: {:?}",
-                &sid, message
-            );
             if message.is_flow_control() {
-                eprintln!("DBG: preprocessor: skipping flow control");
                 return false;
             }
 
             // Track and respond to idle heartbeats
             if message.is_idle_heartbeat() {
-                eprintln!("DBG: preprocessor: is-idle-heartbeat");
                 let maybe_consumer_stalled = message
                     .headers
                     .as_ref()
@@ -599,7 +593,6 @@ impl crate::client::Preprocessor for SubscriptionPreprocessor {
                             .await;
                     }
                 }
-                eprintln!("DBG: preprocessor: ret false");
                 false;
             }
 
@@ -708,7 +701,6 @@ impl JetStream {
                 entry.insert(v.to_string());
             }
 
-            eprintln!("publish 1");
             if let Some(v) = options.expected_last_msg_id.as_ref() {
                 let entry = headers
                     .inner
@@ -717,7 +709,6 @@ impl JetStream {
 
                 entry.insert(v.to_string());
             }
-            eprintln!("publish 2");
 
             if let Some(v) = options.expected_stream.as_ref() {
                 let entry = headers
@@ -727,7 +718,6 @@ impl JetStream {
 
                 entry.insert(v.to_string());
             }
-            eprintln!("publish 3");
 
             if let Some(v) = options.expected_last_sequence.as_ref() {
                 let entry = headers
@@ -747,23 +737,19 @@ impl JetStream {
 
                 entry.insert(v.to_string());
             }
-            eprintln!("publish 5");
 
             Some(headers)
         } else {
             maybe_headers.cloned()
         };
-        eprintln!("publish 6");
 
         let maybe_timeout = maybe_options.and_then(|options| options.timeout);
-        eprintln!("publish 7: sending req on {}", subject);
 
         let res_msg = self
             .connection
             .request_with_headers_or_timeout(subject, maybe_headers.as_ref(), maybe_timeout, msg)
             .await?;
 
-        eprintln!("publish 8");
         let res: ApiResponse<PublishAck> = serde_json::de::from_slice(&res_msg.data)?;
         match res {
             ApiResponse::Ok(pub_ack) => Ok(pub_ack),

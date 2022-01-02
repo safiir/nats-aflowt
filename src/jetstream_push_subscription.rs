@@ -620,7 +620,6 @@ impl PushSubscription {
     /// # }
     /// ```
     pub async fn drain(&mut self) -> io::Result<()> {
-        eprintln!("DBG: drain 0");
         // Unsubscribe
         self.0
             .context
@@ -630,7 +629,6 @@ impl PushSubscription {
             .flush(DEFAULT_FLUSH_TIMEOUT)
             .await?;
 
-        eprintln!("DBG: drain 1");
         self.0
             .context
             .connection
@@ -639,11 +637,9 @@ impl PushSubscription {
             .unsubscribe(self.0.sid.load(Ordering::Relaxed))
             .await?;
 
-        eprintln!("DBG: drain 2");
         // Discard all queued messages.
         while self.0.messages.try_recv().await.is_some() {}
 
-        eprintln!("DBG: drain 3");
         // Delete the consumer, if we own it.
         if self.0.consumer_ownership == ConsumerOwnership::Yes {
             self.0
@@ -652,7 +648,6 @@ impl PushSubscription {
                 .await
                 .ok();
         }
-        eprintln!("DBG: drain 4");
 
         Ok(())
     }

@@ -533,35 +533,26 @@ impl Connection {
         msg: impl AsRef<[u8]>,
     ) -> io::Result<Message> {
         // Publish a request.
-        eprintln!("DBG: req 0 (subject: {}", subject);
         let reply = self.new_inbox();
-        eprintln!("DBG: req 1 (reply: {}", &reply);
         let sub = self.subscribe(&reply).await?;
-        eprintln!("DBG: req 2: subscribed");
         self.publish_with_reply_or_headers(subject, Some(reply.as_str()), maybe_headers, msg)
             .await?;
-        eprintln!("DBG: req 3: published");
 
         // Wait for the response
         let result = if let Some(timeout) = maybe_timeout {
-            eprintln!("DBG: req 4 (wait with timeout)");
             sub.next_timeout(timeout).await
         } else if let Some(msg) = sub.next().await {
-            eprintln!("DBG: req 5: got reply on {}", reply);
             Ok(msg)
         } else {
-            eprintln!("DBG: req 6: subscription empty");
             Err(ErrorKind::ConnectionReset.into())
         };
 
         // Check for no responder status.
         if let Ok(msg) = result.as_ref() {
-            eprintln!("DBG: req 8");
             if msg.is_no_responders() {
                 return Err(Error::new(ErrorKind::NotFound, "no responders"));
             }
         }
-        eprintln!("DBG: req 9");
 
         result
     }

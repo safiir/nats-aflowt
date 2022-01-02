@@ -296,7 +296,6 @@ impl Client {
 
     /// Makes a round trip to the server to ensure buffered messages reach it.
     pub(crate) async fn flush(&self, timeout: Duration) -> io::Result<()> {
-        eprintln!("DBG: client flush");
         let mut pong = {
             // Inject random delays when testing.
             inject_delay().await;
@@ -412,7 +411,6 @@ impl Client {
         queue_group: Option<&str>,
         message_processor: Pin<Box<dyn Preprocessor>>,
     ) -> io::Result<(u64, crate::SubscriptionReceiver<Message>)> {
-        eprintln!("DBG: client subscribing on sub {}", subject);
         inject_delay().await;
 
         let mut write = self.state.write.lock().await;
@@ -427,7 +425,6 @@ impl Client {
 
         // If connected, send a SUB operation.
         if let Some(writer) = write.writer.as_mut() {
-            eprintln!("DBG: connected, sending sub {} sid {}", subject, &sid);
             let op = ClientOp::Sub {
                 subject,
                 queue_group,
@@ -714,7 +711,6 @@ impl Client {
             //  Don't use backoff on first connect unless retry_on_failed_connect is set to true.
             let use_backoff = self.options.retry_on_failed_connect || !first_connect;
 
-            eprintln!("DBG: client run: connecting");
             // Make a connection to the server.
             let (server_info, stream) = connector.connect(use_backoff).await?;
             self.process_info(&server_info, &connector).await;
@@ -722,7 +718,6 @@ impl Client {
             let reader = BufReader::with_capacity(BUF_CAPACITY, stream.clone());
             let writer = BufWriter::with_capacity(BUF_CAPACITY, stream);
 
-            eprintln!("DBG: client run: reconnect");
             // Set up the new connection for this client.
             if self.reconnect(server_info, writer).await.is_ok() {
                 // Connected! Now dispatch MSG operations.
@@ -738,7 +733,6 @@ impl Client {
                 }
             }
 
-            eprintln!("DBG: client run: clear pings");
             // Clear our pings_out.
             let mut read = self.state.read.lock().await;
             read.pings_out = 0;
@@ -753,7 +747,6 @@ impl Client {
                 return Ok(());
             }
             first_connect = false;
-            eprintln!("DBG: client run: loop");
         }
     }
 
