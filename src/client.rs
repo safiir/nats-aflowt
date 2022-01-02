@@ -11,7 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::{HashMap, VecDeque};
+//use async_trait::async_trait;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::io::{self, Error, ErrorKind};
 use std::mem;
@@ -28,11 +29,12 @@ use tokio::{io::BufReader, io::BufWriter, sync::Mutex};
 use crate::connector::{Connector, NatsStream};
 use crate::message::Message;
 use crate::proto::{self, ClientOp, ServerOp};
+use crate::BoxFuture;
 use crate::{header::HeaderMap, inject_delay, inject_io_failure, Options, ServerInfo};
 
 const BUF_CAPACITY: usize = 32 * 1024;
 /// maximum messages to queue before applying backpressure
-const MAX_SUBSCRIPTION_QUEUE: usize = 512;
+const MAX_SUBSCRIPTION_QUEUE: usize = 650;
 
 /// Client state.
 ///
@@ -43,6 +45,12 @@ const MAX_SUBSCRIPTION_QUEUE: usize = 512;
 struct State {
     write: Mutex<WriteState>,
     read: Mutex<ReadState>,
+    meta: Mutex<MetaState>,
+}
+
+struct MetaState {
+    /// Set of subjects that are currently muted.
+    mutes: HashSet<u64>,
 }
 
 struct WriteState {
@@ -79,11 +87,37 @@ struct ReadState {
     pings_out: u8,
 }
 
+/// A handler for preprocess messages for a subscription as they arrive over the wire.
+//#[async_trait]
+//pub(crate) trait Preprocessor: Send + Sync {
+//    async fn process(&self, sid: u64, msg: &Message) -> bool;
+//}
+//#[async_trait]
+pub(crate) trait Preprocessor: Send + Sync {
+    fn process<'proc>(&'proc self, sid: u64, msg: &'proc Message) -> BoxFuture<'proc, bool>;
+}
+
+#[derive(Debug, Default, Clone)]
+struct NoProcessing {}
+//#[async_trait]
+//impl<'p> Preprocessor for NoProcessing {
+//    async fn process(&self, _sid: u64, _msg: &Message) -> bool {
+//        false
+//    }
+//}
+//#[async_trait]
+impl<'p> Preprocessor for NoProcessing {
+    fn process(&self, _sid: u64, _msg: &Message) -> BoxFuture<'static, bool> {
+        Box::pin(async { false })
+    }
+}
+
 /// A registered subscription.
 struct Subscription {
     subject: String,
     queue_group: Option<String>,
     messages: tokio::sync::mpsc::Sender<Message>,
+    preprocess: Pin<Box<dyn Preprocessor>>,
 }
 
 /// A NATS client.
@@ -117,6 +151,9 @@ impl Client {
         // The client state.
         let _client = Client {
             state: Arc::new(State {
+                meta: Mutex::new(MetaState {
+                    mutes: HashSet::new(),
+                }),
                 write: Mutex::new(WriteState {
                     writer: None,
                     flush_kicker,
@@ -147,6 +184,8 @@ impl Client {
         // - Reading messages from the server and processing them.
         // - Forwarding MSG operations to subscribers.
         let client = _client.clone();
+        //let close_callback = &options.close_callback;
+        let opt = options.clone();
         tokio::spawn(async move {
             {
                 let res = client.run(connector).await;
@@ -161,8 +200,7 @@ impl Client {
                         writer.shutdown().await.ok();
                     }
                 }
-                // this is synchronous ...
-                options.close_callback.call();
+                opt.close_callback.call().await;
             }
         });
 
@@ -200,16 +238,19 @@ impl Client {
 
                     // Flush the writer.
                     let mut write = client.state.write.lock().await;
+                    let mut read = client.state.read.lock().await;
                     if let Some(writer) = write.writer.as_mut() {
                         // If flushing fails, disconnect.
                         if writer.flush().await.is_err() {
                             last = Instant::now();
                             let _ = writer.shutdown().await;
                             write.writer = None;
-                            let mut read = client.state.read.lock().await;
                             read.pongs.clear();
                         }
                     }
+
+                    // NB see locking protocol for state.write and state.read
+                    drop(read);
                     drop(write);
                 } else {
                     // timeout
@@ -238,6 +279,7 @@ impl Client {
                         }
                     }
 
+                    // NB see locking protocol for state.write and state.read
                     drop(read);
                     drop(write);
                 }
@@ -254,6 +296,7 @@ impl Client {
 
     /// Makes a round trip to the server to ensure buffered messages reach it.
     pub(crate) async fn flush(&self, timeout: Duration) -> io::Result<()> {
+        eprintln!("DBG: client flush");
         let mut pong = {
             // Inject random delays when testing.
             inject_delay().await;
@@ -356,8 +399,20 @@ impl Client {
         &self,
         subject: &str,
         queue_group: Option<&str>,
-    ) -> io::Result<(u64, crate::subscription::Receiver<Message>)> {
+    ) -> io::Result<(u64, crate::subscription::SubscriptionReceiver<Message>)> {
         // Inject random delays when testing.
+        self.subscribe_with_preprocessor(subject, queue_group, Box::pin(NoProcessing::default()))
+            .await
+    }
+
+    /// Subscribe to a subject with a message preprocessor.
+    pub(crate) async fn subscribe_with_preprocessor(
+        &self,
+        subject: &str,
+        queue_group: Option<&str>,
+        message_processor: Pin<Box<dyn Preprocessor>>,
+    ) -> io::Result<(u64, crate::SubscriptionReceiver<Message>)> {
+        eprintln!("DBG: client subscribing on sub {}", subject);
         inject_delay().await;
 
         let mut write = self.state.write.lock().await;
@@ -372,6 +427,7 @@ impl Client {
 
         // If connected, send a SUB operation.
         if let Some(writer) = write.writer.as_mut() {
+            eprintln!("DBG: connected, sending sub {} sid {}", subject, &sid);
             let op = ClientOp::Sub {
                 subject,
                 queue_group,
@@ -389,6 +445,7 @@ impl Client {
                 subject: subject.to_string(),
                 queue_group: queue_group.map(ToString::to_string),
                 messages: sender,
+                preprocess: message_processor,
             },
         );
 
@@ -397,6 +454,68 @@ impl Client {
         drop(write);
 
         Ok((sid, receiver.into()))
+    }
+
+    /// Marks a subscription as muted.
+    pub(crate) async fn mute(&self, sid: u64) -> io::Result<bool> {
+        let mut meta = self.state.meta.lock().await;
+        Ok(meta.mutes.insert(sid))
+    }
+
+    /// Resubscribes an existing subscription by unsubscribing from the old subject and subscribing
+    /// to the new subject returning a new sid while retaining the existing channel receiver.
+    pub(crate) async fn resubscribe(&self, old_sid: u64, new_subject: &str) -> io::Result<u64> {
+        // Inject random delays when testing.
+        inject_delay().await;
+
+        let mut write = self.state.write.lock().await;
+        let mut read = self.state.read.lock().await;
+
+        // Check if the client is closed.
+        self.check_shutdown()?;
+
+        let subscription = read
+            .subscriptions
+            .remove(&old_sid)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "subscription not found"))?;
+
+        // Generate a subject ID.
+        let new_sid = write.next_sid;
+        write.next_sid += 1;
+
+        // Send an UNSUB and SUB messages.
+        if let Some(writer) = write.writer.as_mut() {
+            proto::encode(
+                writer,
+                ClientOp::Unsub {
+                    sid: old_sid,
+                    max_msgs: None,
+                },
+            )
+            .await?;
+        }
+
+        let queue_group = subscription.queue_group.clone();
+        read.subscriptions.insert(new_sid, subscription);
+
+        if let Some(writer) = write.writer.as_mut() {
+            proto::encode(
+                writer,
+                ClientOp::Sub {
+                    sid: new_sid,
+                    subject: new_subject,
+                    queue_group: queue_group.as_deref(),
+                },
+            )
+            .await?;
+            write.flush_kicker.try_send(()).ok();
+        }
+
+        // NB see locking protocol for state.write and state.read
+        drop(read);
+        drop(write);
+
+        Ok(new_sid)
     }
 
     /// Unsubscribes from a subject.
@@ -443,6 +562,7 @@ impl Client {
         // Inject random delays when testing.
         inject_delay().await;
 
+        eprintln!("DBG: publishing on sub {}", subject);
         let server_info = self.server_info.lock().await;
         if headers.is_some() && !server_info.headers {
             return Err(Error::new(
@@ -591,35 +711,40 @@ impl Client {
         let mut first_connect = true;
 
         loop {
-            // Don't use backoff on first connect.
-            let use_backoff = !first_connect;
+            //  Don't use backoff on first connect unless retry_on_failed_connect is set to true.
+            let use_backoff = self.options.retry_on_failed_connect || !first_connect;
+
+            eprintln!("DBG: client run: connecting");
             // Make a connection to the server.
             let (server_info, stream) = connector.connect(use_backoff).await?;
-            self.process_info(&server_info, &connector);
+            self.process_info(&server_info, &connector).await;
 
             let reader = BufReader::with_capacity(BUF_CAPACITY, stream.clone());
             let writer = BufWriter::with_capacity(BUF_CAPACITY, stream);
 
+            eprintln!("DBG: client run: reconnect");
             // Set up the new connection for this client.
             if self.reconnect(server_info, writer).await.is_ok() {
                 // Connected! Now dispatch MSG operations.
                 if !first_connect {
-                    connector.get_options().reconnect_callback.call();
+                    connector.get_options().reconnect_callback.call().await;
                 }
                 if self.dispatch(reader, &mut connector).await.is_ok() {
                     // If the client stopped gracefully, return.
                     return Ok(());
                 } else {
-                    connector.get_options().disconnect_callback.call();
+                    connector.get_options().disconnect_callback.call().await;
                     self.state.write.lock().await.writer = None;
                 }
             }
 
+            eprintln!("DBG: client run: clear pings");
             // Clear our pings_out.
             let mut read = self.state.read.lock().await;
             read.pings_out = 0;
             drop(read);
 
+            eprintln!("DBG: client run: delay");
             // Inject random delays when testing.
             inject_delay().await;
 
@@ -628,6 +753,7 @@ impl Client {
                 return Ok(());
             }
             first_connect = false;
+            eprintln!("DBG: client run: loop");
         }
     }
 
@@ -693,9 +819,9 @@ impl Client {
     }
 
     // processes action need to be performed based on retrieved server info.
-    fn process_info(&self, server_info: &ServerInfo, connector: &Connector) {
+    async fn process_info(&self, server_info: &ServerInfo, connector: &Connector) {
         if server_info.lame_duck_mode {
-            connector.get_options().lame_duck_callback.call();
+            connector.get_options().lame_duck_callback.call().await;
         }
     }
 
@@ -728,7 +854,7 @@ impl Client {
                     for url in &server_info.connect_urls {
                         connector.add_url(url).ok();
                     }
-                    self.process_info(&server_info, connector);
+                    self.process_info(&server_info, connector).await;
                     *self.server_info.lock().await = server_info;
                 }
 
@@ -776,6 +902,11 @@ impl Client {
                     reply_to,
                     payload,
                 } => {
+                    // Ignore muted subscriptions
+                    if self.state.meta.lock().await.mutes.get(&sid).is_some() {
+                        continue;
+                    }
+
                     let read = self.state.read.lock().await;
 
                     // Send the message to matching subscription.
@@ -789,9 +920,15 @@ impl Client {
                             double_acked: Default::default(),
                         };
 
+                        // Preprocess and drop the message from the buffer if it the predicate
+                        // returns true
+                        if (&subscription.preprocess).process(sid, &msg).await {
+                            continue;
+                        }
+
                         // Send a message or drop it if the channel is
                         // disconnected or full.
-                        subscription.messages.try_send(msg).ok();
+                        subscription.messages.send(msg).await.unwrap();
                     }
                 }
 
@@ -802,6 +939,11 @@ impl Client {
                     reply_to,
                     payload,
                 } => {
+                    // Ignore muted subscriptions
+                    if self.state.meta.lock().await.mutes.get(&sid).is_some() {
+                        continue;
+                    }
+
                     let read = self.state.read.lock().await;
                     // Send the message to matching subscription.
                     if let Some(subscription) = read.subscriptions.get(&sid) {
@@ -814,17 +956,24 @@ impl Client {
                             double_acked: Default::default(),
                         };
 
+                        // Preprocess and drop the message from the buffer if it the predicate
+                        // returns true
+                        if (subscription.preprocess).process(sid, &msg).await {
+                            continue;
+                        }
+
                         // Send a message or drop it if the channel is
                         // disconnected or full.
-                        subscription.messages.try_send(msg).ok();
+                        subscription.messages.send(msg).await.unwrap();
                     }
                 }
 
                 ServerOp::Err(msg) => {
+                    let si = self.server_info().await;
                     connector
                         .get_options()
                         .error_callback
-                        .call(self, Error::new(ErrorKind::Other, msg))
+                        .call(si, Error::new(ErrorKind::Other, msg))
                         .await;
                 }
 

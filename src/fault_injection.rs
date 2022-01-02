@@ -51,7 +51,7 @@ pub async fn inject_delay() {
     }
 
     if fastrand::i32(..2) == 0 {
-        //thread::yield_now();
+        std::thread::yield_now();
     }
 }
 

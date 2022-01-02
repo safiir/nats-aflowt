@@ -1,6 +1,4 @@
-use pin_utils::pin_mut;
 use std::{collections::HashSet, io, iter::FromIterator, time::Duration};
-use tokio_stream::StreamExt;
 
 mod util;
 use nats::jetstream;
@@ -52,11 +50,7 @@ async fn jetstream_publish() {
     // Create the stream using our client API.
     js.add_stream(StreamConfig {
         name: "TEST".to_string(),
-        subjects: Some(vec![
-            "test".to_string(),
-            "foo".to_string(),
-            "bar".to_string(),
-        ]),
+        subjects: vec!["test".to_string(), "foo".to_string(), "bar".to_string()],
         ..Default::default()
     })
     .await
@@ -157,8 +151,8 @@ async fn jetstream_publish() {
         .await
         .unwrap();
 
-    assert_eq!(ack.stream, "TEST");
     assert!(ack.duplicate);
+    assert_eq!(ack.stream, "TEST");
     assert_eq!(ack.sequence, 2);
     assert_eq!(js.stream_info("TEST").await.unwrap().state.messages, 2);
 
@@ -256,171 +250,264 @@ async fn jetstream_publish() {
 }
 
 #[tokio::test]
-async fn jetstream_create_stream_and_consumer() -> io::Result<()> {
-    let (_s, _nc, js) = run_basic_jetstream().await;
-    js.add_stream("stream1").await?;
-    js.add_consumer("stream1", "consumer1").await?;
-    Ok(())
+async fn jetstream_subscribe() {
+    let s = util::run_server("tests/configs/jetstream.conf");
+    let nc = nats::connect(&s.client_url()).await.unwrap();
+    let js = nats::jetstream::new(nc);
+
+    js.add_stream(&StreamConfig {
+        name: "TEST".to_string(),
+        subjects: vec![
+            "foo".to_string(),
+            "bar".to_string(),
+            "baz".to_string(),
+            "foo.*".to_string(),
+        ],
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+
+    js.stream_info("TEST").await.unwrap();
+
+    let sub = js.subscribe("foo").await.unwrap();
+
+    let payload = b"hello js";
+    for _ in 0..10 {
+        js.publish("foo", payload).await.unwrap();
+    }
+
+    for _ in 0..10 {
+        // And receive it on our subscription
+        let msg = sub.next().await.unwrap();
+        msg.ack().await.unwrap();
+        assert_eq!(msg.data, payload);
+    }
+
+    // Check the state of consumer matches up with our expectations
+    let info = sub.consumer_info().await.unwrap();
+    assert_eq!(info.config.ack_policy, AckPolicy::Explicit);
+    assert_eq!(info.delivered.consumer_seq, 10);
+    assert_eq!(info.ack_floor.consumer_seq, 10);
 }
 
 #[tokio::test]
-async fn jetstream_queue_process() -> io::Result<()> {
-    let (_s, nc, js) = run_basic_jetstream().await;
+async fn jetstream_subscribe_durable() {
+    let s = util::run_server("tests/configs/jetstream.conf");
+    let nc = nats::connect(&s.client_url()).await.unwrap();
+    let js = nats::jetstream::new(nc);
 
-    let _ = js.delete_stream("qtest1").await;
-
-    js.add_stream(StreamConfig {
-        name: "qtest1".to_string(),
-        retention: RetentionPolicy::WorkQueue,
-        storage: StorageType::File,
+    js.add_stream(&StreamConfig {
+        name: "TEST".to_string(),
+        subjects: vec![
+            "foo".to_string(),
+            "bar".to_string(),
+            "baz".to_string(),
+            "foo.*".to_string(),
+        ],
         ..Default::default()
     })
-    .await?;
+    .await
+    .unwrap();
 
-    let mut consumer1 = js
-        .add_consumer(
-            "qtest1",
-            ConsumerConfig {
-                max_deliver: 5,
-                durable_name: Some("consumer1".to_string()),
-                ack_policy: AckPolicy::Explicit,
-                replay_policy: ReplayPolicy::Instant,
-                deliver_policy: DeliverPolicy::All,
-                ack_wait: 30 * 1_000_000_000,
-                deliver_subject: None,
-                ..Default::default()
-            },
+    js.stream_info("TEST").await.unwrap();
+
+    // Create a durable subscription.
+    let mut sub = js
+        .subscribe_with_options(
+            "foo",
+            &SubscribeOptions::new().durable_name("foobar".to_string()),
         )
-        .await?;
+        .await
+        .unwrap();
 
-    for i in 1..=1000 {
-        nc.publish("qtest1", format!("{}", i)).await?;
-    }
+    let info = sub.consumer_info().await.unwrap();
+    assert_eq!(info.config.durable_name, Some("foobar".to_string()));
 
-    for _ in 1..=1000 {
-        consumer1.process(|_msg| Ok(())).await?;
-    }
+    // Drain to delete the consumer.
+    sub.drain().await.unwrap();
 
-    Ok(())
+    // Re-create the subscription
+    let sub = js
+        .subscribe_with_options(
+            "foo",
+            &SubscribeOptions::new().durable_name("foobar".to_string()),
+        )
+        .await
+        .unwrap();
+
+    // Check that it has a new delivery subject.
+    let old_info = info;
+    let new_info = sub.consumer_info().await.unwrap();
+
+    assert_ne!(
+        new_info.config.deliver_subject,
+        old_info.config.deliver_subject
+    );
+    // Unsubscribe to delete the consumer.
+    sub.unsubscribe().await.unwrap();
+
+    // Create again and make sure that works.
+    js.subscribe_with_options(
+        "foo",
+        &SubscribeOptions::new().durable_name("foobar".to_string()),
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
-async fn jetstream_basics() -> io::Result<()> {
-    let (_s, nc, js) = run_basic_jetstream().await;
+async fn jetstream_queue_subscribe() {
+    let s = util::run_server("tests/configs/jetstream.conf");
+    let nc = nats::connect(&s.client_url()).await.unwrap();
+    let js = nats::jetstream::new(nc);
 
-    let _ = js.delete_stream("test1");
-    let _ = js.delete_stream("test2");
-
-    js.add_stream(StreamConfig {
-        name: "test1".to_string(),
-        retention: RetentionPolicy::WorkQueue,
+    js.add_stream(&StreamConfig {
+        name: "TEST".to_string(),
+        subjects: vec![
+            "foo".to_string(),
+            "bar".to_string(),
+            "baz".to_string(),
+            "foo.*".to_string(),
+        ],
         ..Default::default()
     })
-    .await?;
+    .await
+    .unwrap();
+    js.stream_info("TEST").await.unwrap();
 
-    js.add_stream("test2").await?;
-    js.stream_info("test2").await?;
-    js.add_consumer("test2", "consumer1").await?;
-
-    let consumer2_cfg = ConsumerConfig {
-        durable_name: Some("consumer2".to_string()),
-        ack_policy: AckPolicy::All,
-        deliver_subject: Some("consumer2_ds".to_string()),
-        ..Default::default()
-    };
-    js.add_consumer("test2", &consumer2_cfg).await?;
-    js.consumer_info("test2", "consumer1").await?;
-
-    for i in 1..=1000 {
-        nc.publish("test2", format!("{}", i)).await?;
+    for _ in 0..10 {
+        js.publish("bar", b"hello js").await.unwrap();
     }
 
-    assert_eq!(js.stream_info("test2").await?.state.messages, 1000);
+    // Create a queue group on "bar" with no explicit durable name, which
+    // means that the queue name will be used as the durable name.
+    let sub1 = js.queue_subscribe("bar", "v0").await.unwrap();
 
-    let mut consumer1 = js.existing("test2", "consumer1").await?;
+    // Since the above JS consumer is created on subject "bar", trying to
+    // add a member to the same group but on subject "baz" should fail.
+    js.queue_subscribe("baz", "v0").await.unwrap_err();
 
-    for _ in 1..=1000 {
-        consumer1.process(|_msg| Ok(())).await?;
-    }
+    // If the queue group is different, but we try to attach to the existing
+    // JS consumer that is created for group "v0", then this should fail.
+    js.queue_subscribe_with_options(
+        "bar",
+        "v1",
+        &SubscribeOptions::new().durable_name("v0".to_string()),
+    )
+    .await
+    .unwrap_err();
 
-    let mut consumer2 = js.existing("test2", consumer2_cfg).await?;
+    // However, if a durable name is specified, creating a queue sub with
+    // the same queue name is ok, but will feed from a different JS consumer.
+    let sub2 = js
+        .queue_subscribe_with_options(
+            "bar",
+            "v0",
+            &SubscribeOptions::new().durable_name("other_queue_durable".to_string()),
+        )
+        .await
+        .unwrap();
 
-    let mut count = 0;
-    while count != 1000 {
-        let _: Vec<()> = consumer2
-            .process_batch(128, |_msg| {
-                count += 1;
-                Ok(())
-            })
-            .await
-            .into_iter()
-            .collect::<std::io::Result<Vec<()>>>()?;
-    }
-    assert_eq!(count, 1000);
+    let msg = sub1.next().await.unwrap();
+    msg.ack().await.unwrap();
+    assert_eq!(msg.data, b"hello js");
 
-    // sequence numbers start with 1
-    for i in 1..=500 {
-        js.delete_message("test2", i).await?;
-    }
+    let msg = sub2.next_timeout(Duration::from_secs(1)).await.unwrap();
+    msg.ack().await.unwrap();
+    assert_eq!(msg.data, b"hello js");
 
-    assert_eq!(js.stream_info("test2").await?.state.messages, 500);
-
-    js.add_consumer("test2", "consumer3").await?;
-
-    js.existing("test2", "consumer3").await?;
-
-    // cleanup
-    let streams: Vec<StreamInfo> = js.list_streams().filter_map(|s| s.ok()).collect().await;
-    for stream in streams.iter() {
-        let consumers = js.list_consumers(&stream.config.name)?;
-        pin_mut!(consumers);
-        while let Some(cres) = consumers.next().await {
-            let consumer = cres?;
-            js.delete_consumer(&stream.config.name, &consumer.name)
-                .await?;
-        }
-        js.purge_stream(&stream.config.name).await?;
-
-        assert_eq!(js.stream_info(&stream.config.name).await?.state.messages, 0);
-
-        js.delete_stream(&stream.config.name).await?;
-    }
-
-    Ok(())
+    sub1.unsubscribe().await.unwrap();
+    sub2.unsubscribe().await.unwrap();
 }
 
 #[tokio::test]
-async fn jetstream_libdoc_test() {
-    let (_s, nc, js) = run_basic_jetstream().await;
+async fn jetstream_flow_control() {
+    let s = util::run_server("tests/configs/jetstream.conf");
+    let nc = nats::connect(&s.client_url()).await.unwrap();
+    let js = nats::jetstream::new(nc);
 
-    js.add_stream("my_stream").await.unwrap();
-    nc.publish("my_stream", "1").await.unwrap();
-    nc.publish("my_stream", "2").await.unwrap();
-    nc.publish("my_stream", "3").await.unwrap();
-    nc.publish("my_stream", "4").await.unwrap();
+    js.add_stream(&StreamConfig {
+        name: "TEST".to_string(),
+        subjects: vec![
+            "foo".to_string(),
+            "bar".to_string(),
+            "baz".to_string(),
+            "foo.*".to_string(),
+        ],
+        ..Default::default()
+    })
+    .await
+    .unwrap();
 
-    let mut consumer = js
-        .create_or_bind("my_stream", "existing_or_created_consumer")
+    js.stream_info("TEST").await.unwrap();
+
+    let sub = js
+        .subscribe_with_options(
+            "foo",
+            &SubscribeOptions::new()
+                .durable_name("foo".to_string())
+                .deliver_subject("fs".to_string())
+                .idle_heartbeat(Duration::from_millis(300))
+                .enable_flow_control(),
+        )
         .await
         .unwrap();
 
-    // set this very high for CI
-    consumer.timeout = std::time::Duration::from_millis(1500);
+    let info = sub.consumer_info().await.unwrap();
+    assert!(info.config.flow_control);
 
-    consumer.process(|msg| Ok(msg.data.len())).await.unwrap();
+    // Publish a some messages
+    let data = b"hello";
+    for _ in 0..250 {
+        js.publish("foo", data).await.unwrap();
+    }
 
-    consumer
-        .process_timeout(|msg| Ok(msg.data.len()))
+    // Wait for a second to force a build up of idle heartbeats and a flow control to be
+    std::thread::sleep(Duration::from_secs(1));
+
+    // Make sure no control messages make it through `next`
+    for _ in 0..250 {
+        let message = sub.next().await.unwrap();
+        assert_eq!(message.data, data);
+    }
+}
+
+#[tokio::test]
+async fn jetstream_ordered() {
+    let s = util::run_server("tests/configs/jetstream.conf");
+    let nc = nats::connect(&s.client_url()).await.unwrap();
+    let js = nats::jetstream::new(nc);
+
+    js.add_stream(&StreamConfig {
+        name: "TEST".to_string(),
+        subjects: vec![
+            "foo".to_string(),
+            "bar".to_string(),
+            "baz".to_string(),
+            "foo.*".to_string(),
+        ],
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+
+    js.stream_info("TEST").await.unwrap();
+
+    let sub = js
+        .subscribe_with_options("foo", &SubscribeOptions::ordered().deliver_all())
         .await
         .unwrap();
 
-    let msg = consumer.pull().await.unwrap();
-    msg.ack().await.unwrap();
+    let info = sub.consumer_info().await.unwrap();
+    assert!(info.config.flow_control);
 
-    let batch_size = 128;
-    let results: Vec<std::io::Result<usize>> = consumer
-        .process_batch(batch_size, |msg| Ok(msg.data.len()))
-        .await;
-    let flipped: std::io::Result<Vec<usize>> = results.into_iter().collect();
-    let _sizes: Vec<usize> = flipped.unwrap();
+    for i in 0..250 {
+        js.publish("foo", (i as i64).to_be_bytes()).await.unwrap();
+    }
+
+    for i in 0..250 {
+        let message = sub.next().await.unwrap();
+        assert_eq!(message.data, (i as i64).to_be_bytes());
+    }
 }

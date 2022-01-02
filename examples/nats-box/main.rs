@@ -1,5 +1,25 @@
+use nats::{AsyncCall, BoxFuture};
 use quicli::prelude::*;
 use structopt::{clap::ArgGroup, StructOpt};
+
+struct PrintCallback {
+    msg: String,
+}
+impl PrintCallback {
+    fn new(msg: &str) -> Self {
+        Self {
+            msg: msg.to_string(),
+        }
+    }
+}
+impl AsyncCall for PrintCallback {
+    fn call(&self) -> BoxFuture<()> {
+        let msg = self.msg.clone();
+        Box::pin(async move {
+            println!("{}", msg);
+        })
+    }
+}
 
 /// NATS utility that can perform basic publish, subscribe, request and reply
 /// functions.
@@ -49,8 +69,8 @@ async fn main() -> CliResult {
 
     let nc = opts
         .with_name("nats-box rust example")
-        .disconnect_callback(|| println!("Disconnected"))
-        .reconnect_callback(|| println!("Reconnected"))
+        .disconnect_callback(PrintCallback::new("Disconnected"))
+        .reconnect_callback(PrintCallback::new("Reconnected"))
         .connect(&args.server)
         .await?;
 

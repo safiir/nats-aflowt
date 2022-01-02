@@ -14,7 +14,11 @@ categories = ["network-programming", "api-bindings"]
 
 [features]
 fault_injection = []
-jetstream = []
+unstable = []
+
+[package.metadata.docs.rs]
+features = ["unstable"]
+rustdoc-args = ["--cfg", "docsrs"]
 
 [badges]
 maintenance = { status = "actively-developed" }
@@ -35,11 +39,11 @@ base64 = "0.13.0"
 base64-url = "1.4.10"
 blocking = "1.1.0"
 chrono = { version = "0.4.19", features = ["serde"] }
-crossbeam-channel = "0.5.1"
 fastrand = "1.5.0"
 futures = "0.3"
 itoa = "0.4.7"
 json = "0.12.4"
+lazy_static = "1.4.0"
 log = "0.4.14"
 memchr = "2.4.0"
 nkeys = "0.1.0"
@@ -52,6 +56,7 @@ regex = { version = "1.5.4", default-features = false, features = ["std", "unico
 rustls-native-certs = "0.6"
 rustls-pemfile = "0.2"
 serde_json = "1.0.64"
+serde_nanos = "0.1.1"
 serde_repr = "0.1.7"
 serde = { version = "1.0.126", features = ["derive"] }
 tokio-rustls = "0.23"
@@ -70,7 +75,7 @@ winapi = { version = "0.3.9", features = ["winsock2"] }
 criterion = { version ="0.3.5", features = ["html_reports", "async_tokio"] }
 env_logger = "0.9.0"
 historian = "4.0.4"
-lazy_static = "1.4.0"
+rand = "0.8.4"
 nats_test_server = { path = "nats_test_server" }
 quicli = "0.4.0"
 smol = "1.2.5"

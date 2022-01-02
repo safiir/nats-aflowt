@@ -150,7 +150,7 @@ pub(crate) fn load_certs(path: &Path) -> io::Result<Vec<Certificate>> {
         path,
         "-----BEGIN CERTIFICATE-----",
         "-----END CERTIFICATE-----",
-        &Certificate,
+        &|v| Certificate(v),
     )
 }
 
@@ -160,7 +160,7 @@ pub(crate) fn load_key(path: &Path) -> io::Result<PrivateKey> {
         path,
         "-----BEGIN PRIVATE KEY-----",
         "-----END PRIVATE KEY-----",
-        &PrivateKey,
+        &|v| PrivateKey(v),
     )?;
     if keys.is_empty() {
         return Err(io::Error::new(

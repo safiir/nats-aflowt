@@ -11,6 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::jetstream_types::AckKind;
+use chrono::{TimeZone, Utc};
 use std::{
     fmt, io,
     sync::{
@@ -117,6 +119,56 @@ impl Message {
         false
     }
 
+    // Helper for detecting flow control messages.
+    pub(crate) fn is_flow_control(&self) -> bool {
+        if !self.data.is_empty() {
+            return false;
+        }
+
+        if let Some(headers) = &self.headers {
+            if let Some(set) = headers.get(header::STATUS) {
+                if set.get("100").is_none() {
+                    return false;
+                }
+            }
+
+            if let Some(set) = headers.get(header::DESCRIPTION) {
+                if set.get("Flow Control").is_some() {
+                    return true;
+                }
+
+                if set.get("FlowControl Request").is_some() {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    // Helper for detecting idle heartbeat messages.
+    pub(crate) fn is_idle_heartbeat(&self) -> bool {
+        if !self.data.is_empty() {
+            return false;
+        }
+
+        if let Some(headers) = &self.headers {
+            if let Some(set) = headers.get(header::STATUS) {
+                if set.get("100").is_none() {
+                    return false;
+                }
+            }
+
+            if let Some(set) = headers.get(header::DESCRIPTION) {
+                if set.get("Idle Heartbeat").is_some() {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     /// Acknowledge a `JetStream` message with a default acknowledgement.
     /// See `AckKind` documentation for details of what other types of
     /// acks are available. If you need to send a non-default ack, use
@@ -137,8 +189,7 @@ impl Message {
     /// server acks your ack, use the `double_ack` method instead.
     ///
     /// Does not check whether this message has already been double-acked.
-    #[cfg(feature = "jetstream")]
-    pub async fn ack_kind(&self, ack_kind: crate::jetstream::AckKind) -> io::Result<()> {
+    pub async fn ack_kind(&self, ack_kind: AckKind) -> io::Result<()> {
         self.respond(ack_kind).await
     }
 
@@ -147,8 +198,7 @@ impl Message {
     /// See `AckKind` documentation for details of what each variant means.
     ///
     /// Returns immediately if this message has already been double-acked.
-    #[cfg(feature = "jetstream")]
-    pub async fn double_ack(&self, ack_kind: crate::jetstream::AckKind) -> io::Result<()> {
+    pub async fn double_ack(&self, ack_kind: AckKind) -> io::Result<()> {
         if self.double_acked.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -200,7 +250,6 @@ impl Message {
         }
     }
 
-    #[cfg(feature = "jetstream")]
     /// Returns the `JetStream` message ID
     /// if this is a `JetStream` message.
     /// Returns `None` if this is not
@@ -297,9 +346,8 @@ impl Message {
                 stream_seq: try_parse!(),
                 consumer_seq: try_parse!(),
                 published: {
-                    let nanos: u64 = try_parse!();
-                    let offset = std::time::Duration::from_nanos(nanos);
-                    std::time::UNIX_EPOCH + offset
+                    let nanos: i64 = try_parse!();
+                    Utc.timestamp_nanos(nanos)
                 },
                 pending: try_parse!(),
                 token: if n_tokens >= 9 {
@@ -320,9 +368,8 @@ impl Message {
                 stream_seq: try_parse!(),
                 consumer_seq: try_parse!(),
                 published: {
-                    let nanos: u64 = try_parse!();
-                    let offset = std::time::Duration::from_nanos(nanos);
-                    std::time::UNIX_EPOCH + offset
+                    let nanos: i64 = try_parse!();
+                    Utc.timestamp_nanos(nanos)
                 },
                 pending: try_parse!(),
                 token: None,

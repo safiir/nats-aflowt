@@ -11,8 +11,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use futures::Stream;
+use crate::Stream;
 use std::io;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -30,7 +31,7 @@ struct Inner {
     pub(crate) subject: String,
 
     /// MSG operations received from the server.
-    pub(crate) messages: Receiver<Message>,
+    pub(crate) messages: SubscriptionReceiver<Message>,
 
     /// Client associated with subscription.
     pub(crate) client: Client,
@@ -48,11 +49,11 @@ impl Drop for Inner {
 
 /// Wrapper around `tokio::sync::mpsc::Receiver` that provides interior mutability
 #[derive(Debug)]
-pub struct Receiver<T> {
+pub struct SubscriptionReceiver<T> {
     inner: Mutex<tokio::sync::mpsc::Receiver<T>>,
 }
 
-impl<T> Receiver<T> {
+impl<T> SubscriptionReceiver<T> {
     /// Receives the next value. Returns None if the channel has been closed
     /// and there are no more values.
     pub async fn recv(&self) -> Option<T> {
@@ -72,7 +73,7 @@ impl<T> Receiver<T> {
     }
 }
 
-impl<T> From<tokio::sync::mpsc::Receiver<T>> for Receiver<T> {
+impl<T> From<tokio::sync::mpsc::Receiver<T>> for SubscriptionReceiver<T> {
     fn from(r: tokio::sync::mpsc::Receiver<T>) -> Self {
         Self {
             inner: Mutex::new(r),
@@ -90,7 +91,7 @@ impl Subscription {
     pub(crate) fn new(
         sid: u64,
         subject: String,
-        messages: Receiver<Message>,
+        messages: SubscriptionReceiver<Message>,
         client: Client,
     ) -> Subscription {
         Subscription(Arc::new(Inner {
@@ -126,7 +127,7 @@ impl Subscription {
     /// }
     /// # }
     /// ```
-    pub fn receiver(&self) -> &Receiver<Message> {
+    pub fn receiver(&self) -> &SubscriptionReceiver<Message> {
         &self.0.messages
     }
 
@@ -177,7 +178,9 @@ impl Subscription {
     /// # async fn main() -> std::io::Result<()> {
     /// # let nc = nats::connect("demo.nats.io").await?;
     /// # let sub = nc.subscribe("foo").await?;
-    /// if let Ok(msg) = sub.next_timeout(std::time::Duration::from_secs(1)).await {}
+    /// if let Ok(message) = sub.next_timeout(std::time::Duration::from_secs(1)).await {
+    ///     println!("Received {}", message);
+    /// }
     /// # Ok(())
     /// # }
     /// ```
@@ -195,26 +198,27 @@ impl Subscription {
         }
     }
 
-    /// Returns a message stream.
+    /// Returns a pinned message stream.
     /// same as `stream()`
     ///
     /// # Example
     /// ```no_run
-    /// # use pin_utils::pin_mut;
     /// use futures::stream::StreamExt;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// # let nc = nats::connect("demo.nats.io").await?;
-    /// # let sub = nc.subscribe("foo").await?;
-    /// let stream = sub.messages();
-    /// pin_mut!(stream); // needed for iteration
-    /// while let Some(msg) = stream.next().await {
+    /// let mut sub = nc.subscribe("foo").await?.messages();
+    /// while let Some(msg) = sub.next().await {
     ///    // ...
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub fn messages(&self) -> impl Stream<Item = Message> + '_ {
+    pub fn messages(self) -> Pin<Box<dyn Stream<Item = Message>>> {
+        Box::pin(self.as_stream())
+    }
+
+    fn as_stream(self) -> impl Stream<Item = Message> {
         async_stream::stream! {
             while let Some(message) = self.next().await {
                 yield message;
@@ -222,26 +226,23 @@ impl Subscription {
         }
     }
 
-    /// Returns a message stream.
+    /// Returns a pinned message stream.
     ///
     /// # Example
     /// ```no_run
-    /// # use pin_utils::pin_mut;
     /// use futures::stream::StreamExt;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// # let nc = nats::connect("demo.nats.io").await?;
-    /// # let sub = nc.subscribe("foo").await?;
-    /// let stream = sub.stream();
-    /// pin_mut!(stream); // needed for iteration
-    /// while let Some(msg) = stream.next().await {
+    /// let mut sub = nc.subscribe("foo").await?.stream();
+    /// while let Some(msg) = sub.next().await {
     ///    // ...
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub fn stream(&self) -> impl Stream<Item = Message> + '_ {
-        self.messages()
+    pub fn stream(self) -> Pin<Box<dyn Stream<Item = Message>>> {
+        Box::pin(self.as_stream())
     }
 
     /// Attach a closure to handle messages. This closure will execute in a

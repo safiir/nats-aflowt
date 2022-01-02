@@ -172,7 +172,11 @@ impl Connector {
                 // Calculate sleep duration for exponential backoff and bump the
                 // reconnect counter.
                 let reconnects = self.attempts.get_mut(server).unwrap();
-                let sleep_duration = self.options.reconnect_delay_callback.call(*reconnects);
+                let sleep_duration = self
+                    .options
+                    .reconnect_delay_callback
+                    .call(*reconnects)
+                    .await;
                 *reconnects += 1;
 
                 // Resolve the server URL to socket addresses.
@@ -198,7 +202,9 @@ impl Connector {
                 for addr in addrs {
                     // Sleep for some time if this is not the first connection
                     // attempt for this server.
-                    tokio::time::sleep(sleep_duration).await;
+                    if let Some(sleep_duration) = sleep_duration {
+                        tokio::time::sleep(sleep_duration).await;
+                    }
 
                     // Try connecting to this address.
                     let res = self.connect_addr(addr, server).await;

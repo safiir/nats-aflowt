@@ -1,5 +1,32 @@
 mod util;
+use nats::{AsyncCall, AsyncErrorCallback, BoxFuture};
 pub use util::*;
+
+struct SendBoolCallback {
+    tx: tokio::sync::mpsc::Sender<bool>,
+}
+
+impl AsyncCall for SendBoolCallback {
+    fn call(&self) -> BoxFuture<()> {
+        let tx = self.tx.clone();
+        Box::pin(async move {
+            tx.send(true).await.unwrap();
+        })
+    }
+}
+
+struct SendErrCallback {
+    tx: tokio::sync::mpsc::Sender<std::io::Error>,
+}
+
+impl AsyncErrorCallback for SendErrCallback {
+    fn call(&self, _si: nats::ServerInfo, err: std::io::Error) -> BoxFuture<()> {
+        let tx = self.tx.clone();
+        Box::pin(async move {
+            tx.send(err).await.unwrap();
+        })
+    }
+}
 
 #[tokio::test]
 async fn pub_perms() {
@@ -10,18 +37,8 @@ async fn pub_perms() {
     let (etx, mut erx) = tokio::sync::mpsc::channel(1);
 
     let nc = nats::Options::with_user_pass("derek", "s3cr3t!")
-        .error_callback(move |err| {
-            let etx = etx.clone();
-            let _ = tokio::spawn(async move {
-                etx.send(err).await.unwrap();
-            });
-        })
-        .disconnect_callback(move || {
-            let dtx = dtx.clone();
-            let _ = tokio::spawn(async move {
-                dtx.send(true).await.unwrap();
-            });
-        })
+        .error_callback(SendErrCallback { tx: etx })
+        .disconnect_callback(SendBoolCallback { tx: dtx })
         .connect(&s.client_url())
         .await
         .expect("could not connect");
@@ -52,18 +69,8 @@ async fn sub_perms() {
     let (etx, mut erx) = tokio::sync::mpsc::channel(1);
 
     let nc = nats::Options::with_user_pass("derek", "s3cr3t!")
-        .error_callback(move |err| {
-            let etx = etx.clone();
-            let _ = tokio::spawn(async move {
-                etx.send(err).await.unwrap();
-            });
-        })
-        .disconnect_callback(move || {
-            let dtx = dtx.clone();
-            let _ = tokio::spawn(async move {
-                dtx.send(true).await.unwrap();
-            });
-        })
+        .error_callback(SendErrCallback { tx: etx })
+        .disconnect_callback(SendBoolCallback { tx: dtx })
         .connect(&s.client_url())
         .await
         .expect("could not connect");

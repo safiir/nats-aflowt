@@ -72,22 +72,19 @@
 //! ### Subscribe
 //!
 //! ```no_run
-//! # use pin_utils::pin_mut;
 //! # use futures::stream::StreamExt;
 //! # #[tokio::main]
 //! # async fn main() -> std::io::Result<()> {
 //! # use std::time::Duration;
 //! let nc = nats::connect("demo.nats.io").await?;
-//! let sub = nc.subscribe("foo").await?;
+//! let mut sub = nc.subscribe("foo").await?.stream();
 //!
-//! // using subscription as a stream
-//! let mut stream = sub.messages();
-//! pin_mut!(stream);
-//! while let Some(msg) = stream.next().await {
+//! // use as Stream
+//! while let Some(msg) = sub.next().await {
 //!     /* ... */
 //! }
 //!
-//! // Using a threaded handler.
+//! // Using a blocking handler.
 //! let sub = nc.subscribe("bar").await?.with_handler(move |msg| {
 //!     println!("Received {}", &msg);
 //!     Ok(())
@@ -102,7 +99,6 @@
 //!
 //! ```no_run
 //! # use std::time::Duration;
-//! # use pin_utils::pin_mut;
 //! # use futures::stream::StreamExt;
 //! # #[tokio::main]
 //! # async fn main() -> std::io::Result<()> {
@@ -113,8 +109,7 @@
 //! let resp = nc.request_timeout("foo", "Help me?", Duration::from_secs(2)).await?;
 //!
 //! // With multiple responses.
-//! let stream = nc.request_multi("foo", "Help").await?;
-//! pin_mut!(stream);
+//! let mut stream = nc.request_multi("foo", "Help").await?.stream();
 //! while let Some(msg) = stream.next().await { }
 //!
 //! // Publish a request manually.
@@ -125,6 +120,7 @@
 //! # Ok(()) }
 //! ```
 
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(test, deny(warnings))]
 #![cfg_attr(
     feature = "fault_injection",
@@ -179,9 +175,6 @@
     clippy::non_ascii_literal,
     clippy::path_buf_push_overwrite,
     clippy::print_stdout,
-    clippy::shadow_reuse,
-    clippy::shadow_same,
-    // clippy::shadow_unrelated,
     clippy::single_match_else,
     clippy::string_add,
     clippy::string_add_assign,
@@ -196,6 +189,8 @@
     clippy::match_like_matches_macro,
     clippy::await_holding_lock,
     clippy::shadow_reuse,
+    clippy::shadow_same,
+    clippy::shadow_unrelated,
     clippy::wildcard_enum_match_arm,
     clippy::module_name_repetitions
 )]
@@ -206,6 +201,7 @@ mod auth_utils;
 mod client;
 mod connect;
 mod connector;
+mod jetstream_push_subscription;
 mod jetstream_types;
 mod message;
 mod options;
@@ -216,9 +212,18 @@ mod subscription;
 /// Header constants and types.
 pub mod header;
 
+pub use futures::future::BoxFuture;
+/// Stream, as used by this crate. re-export of futures::Stream
+pub use futures::Stream;
+
 /// `JetStream` stream management and consumers.
-//#[cfg(feature = "jetstream")]
 pub mod jetstream;
+
+#[cfg_attr(docsrs, doc(cfg(feature = "unstable")))]
+pub mod kv;
+
+#[cfg_attr(docsrs, doc(cfg(feature = "unstable")))]
+pub mod object_store;
 
 #[cfg(feature = "fault_injection")]
 mod fault_injection;
@@ -242,17 +247,18 @@ pub type ConnectionOptions = Options;
 #[deprecated(since = "0.17.0", note = "this has been moved to `header::HeaderMap`.")]
 pub type Headers = HeaderMap;
 
+use lazy_static::lazy_static;
+use regex::Regex;
 use std::{
     io::{self, Error, ErrorKind},
     sync::Arc,
     time::{Duration, Instant},
 };
 
-#[cfg(feature = "jetstream")]
-pub use jetstream::JetStreamOptions;
+//pub use jetstream::JetStreamOptions;
 pub use message::Message;
-pub use options::Options;
-pub use subscription::Subscription;
+pub use options::{AsyncCall, AsyncCallRet, AsyncErrorCallback, Options};
+pub use subscription::{Handler, Subscription, SubscriptionReceiver};
 
 /// A re-export of the `tokio_rustls` crate used in this crate,
 /// for use in cases where manual client configurations
@@ -271,6 +277,10 @@ use secure_wipe::{SecureString, SecureVec};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const LANG: &str = "rust";
 const DEFAULT_FLUSH_TIMEOUT: Duration = Duration::from_secs(10);
+
+lazy_static! {
+    static ref VERSION_RE: Regex = Regex::new(r#"\Av?([0-9]+)\.?([0-9]+)?\.?([0-9]+)?"#).unwrap();
+}
 
 /// Information sent by the server back to this client
 /// during initial connection, and possibly again later.
@@ -341,7 +351,7 @@ impl ServerInfo {
 
 /// A NATS connection.
 #[derive(Clone, Debug)]
-pub struct Connection(Arc<Inner>);
+pub struct Connection(pub(crate) Arc<Inner>);
 
 #[derive(Clone, Debug)]
 struct Inner {
@@ -523,26 +533,35 @@ impl Connection {
         msg: impl AsRef<[u8]>,
     ) -> io::Result<Message> {
         // Publish a request.
+        eprintln!("DBG: req 0 (subject: {}", subject);
         let reply = self.new_inbox();
+        eprintln!("DBG: req 1 (reply: {}", &reply);
         let sub = self.subscribe(&reply).await?;
+        eprintln!("DBG: req 2: subscribed");
         self.publish_with_reply_or_headers(subject, Some(reply.as_str()), maybe_headers, msg)
             .await?;
+        eprintln!("DBG: req 3: published");
 
         // Wait for the response
         let result = if let Some(timeout) = maybe_timeout {
+            eprintln!("DBG: req 4 (wait with timeout)");
             sub.next_timeout(timeout).await
         } else if let Some(msg) = sub.next().await {
+            eprintln!("DBG: req 5: got reply on {}", reply);
             Ok(msg)
         } else {
+            eprintln!("DBG: req 6: subscription empty");
             Err(ErrorKind::ConnectionReset.into())
         };
 
         // Check for no responder status.
         if let Ok(msg) = result.as_ref() {
+            eprintln!("DBG: req 8");
             if msg.is_no_responders() {
                 return Err(Error::new(ErrorKind::NotFound, "no responders"));
             }
         }
+        eprintln!("DBG: req 9");
 
         result
     }
@@ -554,12 +573,11 @@ impl Connection {
     /// ```
     /// # #![feature(async_closure)]
     /// # use futures::stream::StreamExt;
-    /// # use pin_utils::pin_mut;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// # let nc = nats::connect("demo.nats.io").await?;
     /// # nc.subscribe("foo").await?.with_async_handler( async move |m| { m.respond("ans=42").await?; Ok(()) });
-    /// let sub = nc.request_multi("foo", "Help").await?;
+    /// let mut sub = nc.request_multi("foo", "Help").await?.stream();
     /// if let Some(msg) = sub.next().await { /* ... */ }
     /// # Ok(())
     /// # }
@@ -657,6 +675,35 @@ impl Connection {
         let start = Instant::now();
         self.flush().await?;
         Ok(start.elapsed())
+    }
+
+    /// Returns true if the version is compatible with the version components.
+    pub async fn is_server_compatible_version(&self, major: i64, minor: i64, patch: i64) -> bool {
+        let server_info = self.0.client.server_info().await;
+        let server_version_captures = VERSION_RE.captures(&server_info.version).unwrap();
+        let server_major = server_version_captures
+            .get(1)
+            .map(|m| m.as_str().parse::<i64>().unwrap())
+            .unwrap();
+
+        let server_minor = server_version_captures
+            .get(2)
+            .map(|m| m.as_str().parse::<i64>().unwrap())
+            .unwrap();
+
+        let server_patch = server_version_captures
+            .get(3)
+            .map(|m| m.as_str().parse::<i64>().unwrap())
+            .unwrap();
+
+        if server_major < major
+            || (server_major == major && server_minor < minor)
+            || (server_major == major && server_minor == minor && server_patch < patch)
+        {
+            return false;
+        }
+
+        true
     }
 
     /// Returns the client IP as known by the server.

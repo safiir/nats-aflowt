@@ -23,7 +23,7 @@ use std::time::Duration;
 use crate::auth_utils;
 use crate::rustls::WantsCipherSuites;
 use crate::secure_wipe::SecureString;
-use crate::Client;
+use crate::BoxFuture;
 use crate::Connection;
 
 /// Connect options.
@@ -31,6 +31,7 @@ pub struct Options {
     pub(crate) auth: AuthStyle,
     pub(crate) name: Option<String>,
     pub(crate) no_echo: bool,
+    pub(crate) retry_on_failed_connect: bool,
     pub(crate) max_reconnects: Option<usize>,
     pub(crate) reconnect_buffer_size: usize,
     pub(crate) tls_required: bool,
@@ -55,6 +56,7 @@ impl fmt::Debug for Options {
             .entry(&"auth", &self.auth)
             .entry(&"name", &self.name)
             .entry(&"no_echo", &self.no_echo)
+            .entry(&"retry_on_failed_connect", &self.retry_on_failed_connect)
             .entry(&"reconnect_buffer_size", &self.reconnect_buffer_size)
             .entry(&"max_reconnects", &self.max_reconnects)
             .entry(&"tls_required", &self.tls_required)
@@ -78,6 +80,7 @@ impl Default for Options {
             auth: AuthStyle::NoAuth,
             name: None,
             no_echo: false,
+            retry_on_failed_connect: false,
             reconnect_buffer_size: 8 * 1024 * 1024,
             max_reconnects: Some(60),
             tls_required: false,
@@ -87,7 +90,7 @@ impl Default for Options {
             error_callback: ErrorCallback(None),
             disconnect_callback: Callback(None),
             reconnect_callback: Callback(None),
-            reconnect_delay_callback: ReconnectDelayCallback(Box::new(backoff)),
+            reconnect_delay_callback: ReconnectDelayCallback(Some(Box::new(Backoff::default()))),
             close_callback: Callback(None),
             lame_duck_callback: Callback(None),
             tls_client_config: crate::rustls::ClientConfig::builder(),
@@ -95,8 +98,16 @@ impl Default for Options {
     }
 }
 
+#[derive(Default)]
+struct Backoff {}
+impl AsyncCallRet<usize, Duration> for Backoff {
+    fn call(&self, reconnects: usize) -> BoxFuture<'static, Duration> {
+        Box::pin(backoff(reconnects))
+    }
+}
+
 /// Calculates how long to sleep for before connecting to a server.
-pub(crate) fn backoff(reconnects: usize) -> Duration {
+pub(crate) async fn backoff(reconnects: usize) -> Duration {
     // Exponential backoff: 0ms, 1ms, 2ms, 4ms, 8ms, 16ms, ..., 4sec
     let base = if reconnects == 0 {
         Duration::from_millis(0)
@@ -411,6 +422,28 @@ impl Options {
         self
     }
 
+    /// Select option to enable reconnect with backoff
+    /// on first failed connection attempt.
+    /// The reconnect logic with `max_reconnects` and the
+    /// `reconnect_delay_callback` will be specified the same
+    /// as before but will be invoked on the first failed
+    /// connection attempt.
+    ///
+    /// # Example
+    /// ```
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// let nc = nats::Options::new()
+    ///     .retry_on_failed_connect()
+    ///     .connect("demo.nats.io").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn retry_on_failed_connect(mut self) -> Options {
+        self.retry_on_failed_connect = true;
+        self
+    }
+
     /// Set the maximum number of reconnect attempts.
     /// If no servers remain that are under this threshold,
     /// then no further reconnect shall be attempted.
@@ -497,10 +530,18 @@ impl Options {
     /// # Example
     ///
     /// ```
+    /// struct ErrCallback {}
+    /// impl nats::AsyncErrorCallback for ErrCallback {
+    ///     fn call(&self, si: nats::ServerInfo, err: std::io::Error) -> nats::BoxFuture<()> {
+    ///         Box::pin(async move {
+    ///             eprintln!("{} on connection {}", err, si.server_id);
+    ///         })
+    ///     }
+    /// }
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
-    ///     .error_callback(|err| println!("connection received an error: {}", err))
+    ///     .error_callback(ErrCallback{})
     ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
@@ -508,7 +549,7 @@ impl Options {
     #[must_use]
     pub fn error_callback<F>(mut self, cb: F) -> Self
     where
-        F: Fn(Error) + Send + Sync + 'static,
+        F: 'static + AsyncErrorCallback,
     {
         self.error_callback = ErrorCallback(Some(Box::new(cb)));
         self
@@ -520,10 +561,21 @@ impl Options {
     /// # Example
     ///
     /// ```
+    /// struct PrintCallback{
+    ///     msg: String,
+    /// }
+    /// impl nats::AsyncCall for PrintCallback {
+    ///     fn call(&self) -> nats::BoxFuture<()> {
+    ///         let msg = self.msg.clone();
+    ///         Box::pin(async move {
+    ///              println!("{}", self.msg);
+    ///         })
+    ///     }
+    /// }
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
-    ///     .disconnect_callback(|| println!("connection has been lost"))
+    ///     .disconnect_callback(PrintCallback{msg: "connection has been lost".to_string()})
     ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
@@ -531,7 +583,7 @@ impl Options {
     #[must_use]
     pub fn disconnect_callback<F>(mut self, cb: F) -> Self
     where
-        F: Fn() + Send + Sync + 'static,
+        F: 'static + AsyncCall,
     {
         self.disconnect_callback = Callback(Some(Box::new(cb)));
         self
@@ -543,10 +595,21 @@ impl Options {
     /// # Example
     ///
     /// ```
+    /// struct PrintCallback{
+    ///     msg: String,
+    /// }
+    /// impl nats::AsyncCall for PrintCallback {
+    ///     fn call(&self) -> nats::BoxFuture<()> {
+    ///         let msg = self.msg.clone();
+    ///         Box::pin(async move {
+    ///              println!("{}", self.msg);
+    ///         })
+    ///     }
+    /// }
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
-    ///     .reconnect_callback(|| println!("connection has been reestablished"))
+    ///     .reconnect_callback(PrintCallback{msg: "connection has been reestablished".to_string()})
     ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
@@ -554,7 +617,7 @@ impl Options {
     #[must_use]
     pub fn reconnect_callback<F>(mut self, cb: F) -> Self
     where
-        F: Fn() + Send + Sync + 'static,
+        F: 'static + AsyncCall,
     {
         self.reconnect_callback = Callback(Some(Box::new(cb)));
         self
@@ -567,10 +630,21 @@ impl Options {
     /// # Example
     ///
     /// ```
+    /// struct PrintCallback{
+    ///     msg: String,
+    /// }
+    /// impl nats::AsyncCall for PrintCallback {
+    ///     fn call(&self) -> nats::BoxFuture<()> {
+    ///         let msg = self.msg.clone();
+    ///         Box::pin(async move {
+    ///              println!("{}", self.msg);
+    ///         })
+    ///     }
+    /// }
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
-    ///     .close_callback(|| println!("connection has been closed"))
+    ///     .close_callback(PrintCallback{msg:"connection has been closed".to_string()})
     ///     .connect("demo.nats.io").await?;
     /// nc.drain().await.unwrap();
     /// # Ok(())
@@ -579,7 +653,7 @@ impl Options {
     #[must_use]
     pub fn close_callback<F>(mut self, cb: F) -> Self
     where
-        F: Fn() + Send + Sync + 'static,
+        F: 'static + AsyncCall,
     {
         self.close_callback = Callback(Some(Box::new(cb)));
         self
@@ -591,10 +665,21 @@ impl Options {
     /// # Example
     ///
     /// ```
+    /// struct PrintCallback{
+    ///     msg: String,
+    /// }
+    /// impl nats::AsyncCall for PrintCallback {
+    ///     fn call(&self) -> nats::BoxFuture<()> {
+    ///         let msg = self.msg.clone();
+    ///         Box::pin(async move {
+    ///              println!("{}", self.msg);
+    ///         })
+    ///     }
+    /// }
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
-    ///     .lame_duck_callback(|| println!("server entered lame duck mode"))
+    ///     .lame_duck_callback(PrintCallback{msg:"server entered lame duck mode".to_string()})
     ///     .connect("demo.nats.io").await?;
     /// nc.drain().await.unwrap();
     /// # Ok(())
@@ -603,7 +688,7 @@ impl Options {
     #[must_use]
     pub fn lame_duck_callback<F>(mut self, cb: F) -> Self
     where
-        F: Fn() + Send + Sync + 'static,
+        F: 'static + AsyncCall,
     {
         self.lame_duck_callback = Callback(Some(Box::new(cb)));
         self
@@ -622,11 +707,20 @@ impl Options {
     /// # Example
     ///
     /// ```
+    /// use std::time::Duration;
+    /// struct Backoff {}
+    /// impl nats::AsyncCallRet<usize, Duration> for Backoff {
+    ///     fn call(&self, reconnects: usize) -> nats::BoxFuture<Duration> {
+    ///         Box::pin(
+    ///             async move { Duration::from_millis(std::cmp::min((reconnects*100) as u64, 8000)) }
+    ///         )
+    ///     }
+    /// }
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// # use std::time::Duration;
     /// let nc = nats::Options::new()
-    ///     .reconnect_delay_callback(|c| Duration::from_millis(std::cmp::min((c * 100) as u64, 8000)))
+    ///     .reconnect_delay_callback(Backoff{})
     ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
@@ -634,9 +728,9 @@ impl Options {
     #[must_use]
     pub fn reconnect_delay_callback<F>(mut self, cb: F) -> Self
     where
-        F: Fn(usize) -> Duration + Send + Sync + 'static,
+        F: AsyncCallRet<usize, std::time::Duration> + Send + Sync + 'static,
     {
-        self.reconnect_delay_callback = ReconnectDelayCallback(Box::new(cb));
+        self.reconnect_delay_callback = ReconnectDelayCallback(Some(Box::new(cb)));
         self
     }
 
@@ -731,12 +825,17 @@ impl Default for AuthStyle {
     }
 }
 
+// custom trait for async callback: no params, no results
+pub trait AsyncCall: Send + Sync {
+    fn call(&self) -> BoxFuture<()>;
+}
+
 #[derive(Default)]
-pub(crate) struct Callback(Option<Box<dyn Fn() + Send + Sync + 'static>>);
+pub(crate) struct Callback(Option<Box<dyn AsyncCall>>);
 impl Callback {
-    pub fn call(&self) {
+    pub async fn call(&self) {
         if let Some(callback) = self.0.as_ref() {
-            callback();
+            callback.call().await;
         }
     }
 }
@@ -752,20 +851,34 @@ impl fmt::Debug for Callback {
     }
 }
 
-pub(crate) struct ReconnectDelayCallback(Box<dyn Fn(usize) -> Duration + Send + Sync + 'static>);
+// custom trait for async callback: no params, no results
+pub trait AsyncCallRet<Arg, Ret>: Send + Sync {
+    fn call(&self, arg: Arg) -> BoxFuture<Ret>;
+}
+
+pub(crate) struct ReconnectDelayCallback(Option<Box<dyn AsyncCallRet<usize, Duration>>>);
 impl ReconnectDelayCallback {
-    pub fn call(&self, reconnects: usize) -> Duration {
-        self.0(reconnects)
+    pub async fn call(&self, reconnects: usize) -> Option<Duration> {
+        if let Some(callback) = self.0.as_ref() {
+            Some(callback.call(reconnects).await)
+        } else {
+            None
+        }
     }
 }
 
-pub(crate) struct ErrorCallback(Option<Box<dyn Fn(Error) + Send + Sync + 'static>>);
+// NB(ss): the original api pass (&Client,&Error) but Client is not exported from the nats crate,
+// so I changed the interface to accept ServerInfo
+pub trait AsyncErrorCallback: Send + Sync {
+    fn call(&self, si: crate::ServerInfo, err: Error) -> BoxFuture<()>;
+}
+
+pub(crate) struct ErrorCallback(Option<Box<dyn AsyncErrorCallback>>);
 impl ErrorCallback {
-    pub async fn call(&self, client: &Client, err: Error) {
+    pub async fn call(&self, si: crate::ServerInfo, err: Error) {
         if let Some(callback) = self.0.as_ref() {
-            callback(err);
+            callback.call(si, err).await
         } else {
-            let si = client.server_info().await;
             eprintln!("{} on connection [{}]", err, si.client_id);
         }
     }
