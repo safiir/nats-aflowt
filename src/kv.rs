@@ -671,9 +671,9 @@ impl Store {
     /// bucket.put("foo", b"fizz").await?;
     /// bucket.put("bar", b"buzz").await?;
     ///
-    /// let keys = kv.keys().await.unwrap().collect::<Vec<String>>().await;
-    /// assert!(keys.find("foo".to_string()).is_some());
-    /// assert!(keys.find("bar".to_string()).is_some());
+    /// let keys = bucket.keys().await.unwrap().collect::<Vec<String>>().await;
+    /// assert!(keys.contains(&"foo".to_string()));
+    /// assert!(keys.contains(&"bar".to_string()));
     /// # Ok(())
     /// # }
     /// ```
