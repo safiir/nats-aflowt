@@ -13,8 +13,12 @@ keywords = ["nats", "client", "messaging", "api"]
 categories = ["network-programming", "api-bindings"]
 
 [features]
+# enable kv and object_store code and tests
+default = ["unstable"]
 fault_injection = []
 unstable = []
+# (ss) enable "failing_tests" to run tests that still need to be debugged
+failing_tests=[]
 
 [package.metadata.docs.rs]
 features = ["unstable"]
@@ -54,7 +58,7 @@ pin-project = "1.0"
 pin-utils = "0.1"
 regex = { version = "1.5.4", default-features = false, features = ["std", "unicode-perl"] }
 rustls-native-certs = "0.6"
-rustls-pemfile = "0.2"
+rustls-pemfile = "0.2.1"
 serde_json = "1.0.64"
 serde_nanos = "0.1.1"
 serde_repr = "0.1.7"
