@@ -200,7 +200,7 @@ async fn object_multiple_delete() {
     );
 }
 
-// FIXME(ss): this test generates stack overflow.
+// TODO(ss): this test generates stack overflow.
 //   - fails whether server is local or demo.nats.io
 //   - Doc test for put() succeeds using very similar code
 //   -

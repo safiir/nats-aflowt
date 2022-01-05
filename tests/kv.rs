@@ -284,21 +284,21 @@ async fn key_value_keys() {
     kv.delete("foo").await.unwrap();
     kv.purge("bar").await.unwrap();
 
-    // FIXME(ss) BUG: after either delete or purge, keys() stream hangs.
+    // TODO(ss) BUG: after either delete or purge above, keys() stream hangs.
     // All items are returned, but the n+1th call to next().await hangs when it should return None.
     // Using either delete or purge causes the problem.
     // With neither, we can iterate through keys again.
+    #[cfg(feature = "failing_tests")]
+    {
+        eprintln!("checking keys after delete/purge, expect 1 item");
+        let mut stream = kv.keys().await.unwrap();
+        let mut keys = Vec::new();
+        while let Some(k) = stream.next().await {
+            eprintln!("found {}", &k);
+            keys.push(k);
+        }
 
-    /*
-    eprintln!("checking keys after delete/purge, expect 1 item");
-    let mut stream = kv.keys().await.unwrap();
-    let mut keys = Vec::new();
-    while let Some(k) = stream.next().await {
-        eprintln!("found {}", &k);
-        keys.push(k);
+        assert!(keys.iter().any(|s| s == "baz"));
+        assert_eq!(keys.len(), 1);
     }
-
-    assert!(keys.iter().any(|s| s == "baz"));
-    assert_eq!(keys.len(), 1);
-     */
 }
