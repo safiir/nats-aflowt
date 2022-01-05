@@ -12,7 +12,9 @@
 // limitations under the License.
 
 #![cfg(feature = "unstable")]
+#[allow(unused_imports)]
 use rand::prelude::*;
+#[allow(unused_imports)]
 use tokio::io::AsyncReadExt;
 
 mod util;
@@ -35,6 +37,7 @@ async fn object_random() {
 
     let mut rng = rand::thread_rng();
     let mut bytes = Vec::with_capacity(16 * 1024 * 1024 + 22);
+    bytes.resize(16 * 1024 * 1024 + 22, 0);
     rng.try_fill_bytes(&mut bytes).unwrap();
 
     bucket.put("FOO", &mut bytes.as_slice()).await.unwrap();
@@ -54,10 +57,6 @@ async fn object_random() {
 
     assert_eq!(result, bytes);
 
-    let mut bytes = Vec::with_capacity(16 * 1024 * 1024 + 22);
-    rng.try_fill_bytes(&mut bytes).unwrap();
-    bucket.put("FOO", &mut bytes.as_slice()).await.unwrap();
-
     let mut result = Vec::new();
     bucket
         .get("FOO")
@@ -68,6 +67,11 @@ async fn object_random() {
         .unwrap();
 
     assert_eq!(result, bytes);
+
+    let mut bytes = Vec::with_capacity(1024 * 1024 + 22);
+    bytes.resize(1024 * 1024 + 22, 0);
+    rng.try_fill_bytes(&mut bytes).unwrap();
+    bucket.put("FOO", &mut bytes.as_slice()).await.unwrap();
 
     let mut result = Vec::new();
     let mut object = bucket.get("FOO").await.unwrap();
@@ -137,7 +141,6 @@ async fn object_sealed() {
 
 #[tokio::test]
 async fn object_delete() {
-    eprintln!("object_delete 1");
     let server = util::run_server("tests/configs/jetstream.conf");
     let client = nats::connect(&server.client_url()).await.unwrap();
     let context = nats::jetstream::new(client);
@@ -197,9 +200,12 @@ async fn object_multiple_delete() {
     );
 }
 
-// TODO(ss): this test is broken - I get stack overflow
+// FIXME(ss): this test generates stack overflow.
+//   - fails whether server is local or demo.nats.io
+//   - Doc test for put() succeeds using very similar code
+//   -
 #[tokio::test]
-#[ignore]
+#[cfg(feature = "failing_tests")]
 async fn object_names() {
     let server = util::run_server("tests/configs/jetstream.conf");
     let client = nats::connect(&server.client_url()).await.unwrap();
@@ -213,18 +219,18 @@ async fn object_names() {
         .await
         .unwrap();
 
-    let empty = Vec::new();
+    let data = Vec::new();
 
     // Test filename like naming.
-    bucket.put("foo.bar", &mut empty.as_slice()).await.unwrap();
+    assert!(bucket.put("foo.bar", &mut data.as_slice()).await.is_ok());
 
     // Spaces ok
-    bucket.put("foo bar", &mut empty.as_slice()).await.unwrap();
+    assert!(bucket.put("foo bar", &mut data.as_slice()).await.is_ok());
 
     // Errors
-    bucket.put("*", &mut empty.as_slice()).await.unwrap_err();
-    bucket.put(">", &mut empty.as_slice()).await.unwrap_err();
-    bucket.put("", &mut empty.as_slice()).await.unwrap_err();
+    assert!(bucket.put("*", &mut data.as_slice()).await.is_err());
+    assert!(bucket.put(">", &mut data.as_slice()).await.is_err());
+    assert!(bucket.put("", &mut data.as_slice()).await.is_err());
 }
 
 #[tokio::test]

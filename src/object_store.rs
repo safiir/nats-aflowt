@@ -21,6 +21,7 @@ use futures::{Future, StreamExt};
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     cmp,
     collections::HashSet,
@@ -56,6 +57,40 @@ fn is_valid_object_name(object_name: &str) -> bool {
 
 fn sanitize_object_name(object_name: &str) -> String {
     object_name.replace('.', "_").replace(' ', "_")
+}
+
+#[test]
+fn test_valid_bucket_name() {
+    assert!(is_valid_bucket_name("000"));
+    assert!(is_valid_bucket_name("abc-def"));
+    assert!(is_valid_bucket_name("_name"));
+
+    // bad names
+    assert!(!is_valid_bucket_name(""));
+    assert!(!is_valid_bucket_name(".99"));
+    assert!(!is_valid_bucket_name("99."));
+    assert!(!is_valid_bucket_name("*"));
+    assert!(!is_valid_bucket_name("Δ22"));
+}
+
+#[test]
+fn test_valid_object_name() {
+    assert!(is_valid_object_name("000"));
+    assert!(is_valid_object_name("a=.bc"));
+
+    // bad names
+    assert!(!is_valid_object_name(""));
+    assert!(!is_valid_object_name(".99"));
+    assert!(!is_valid_object_name("99."));
+    assert!(!is_valid_object_name("*"));
+    assert!(!is_valid_object_name("Δ22"));
+}
+
+#[test]
+fn test_sanitize_object_name() {
+    assert_eq!(sanitize_object_name("abc").as_str(), "abc");
+    assert_eq!(sanitize_object_name("a.b.c d").as_str(), "a_b_c_d");
+    assert_eq!(sanitize_object_name("a b c.d").as_str(), "a_b_c_d");
 }
 
 /// Configuration values for object store buckets.
@@ -266,7 +301,6 @@ pub struct ObjectStore {
 #[derive(Clone, Debug, Default)]
 struct ObjectBytes {
     remaining_bytes: Vec<u8>,
-    skip_next: bool,
 }
 
 /// Represents an object stored in a bucket.
@@ -274,6 +308,7 @@ pub struct Object {
     info: ObjectInfo,
     subscription: Pin<Box<dyn Stream<Item = Message>>>,
     bytes: Arc<Mutex<ObjectBytes>>,
+    has_pending_messages: Arc<AtomicBool>,
 }
 
 impl Object {
@@ -285,6 +320,7 @@ impl Object {
             subscription,
             info,
             bytes: Arc::new(Mutex::new(ObjectBytes::default())),
+            has_pending_messages: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -295,6 +331,8 @@ impl Object {
 }
 
 impl tokio::io::AsyncRead for Object {
+    /// Read the data chunks for a given Object from attached subscription and copy it to provided
+    /// buffer
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -308,23 +346,11 @@ impl tokio::io::AsyncRead for Object {
             if !bytes.remaining_bytes.is_empty() {
                 let len = cmp::min(buffer.remaining(), bytes.remaining_bytes.len());
                 buffer.put_slice(&bytes.remaining_bytes[..len]);
-
-                if bytes.remaining_bytes.len() > len {
-                    bytes.remaining_bytes = bytes.remaining_bytes[len..].to_vec();
-                }
+                bytes.remaining_bytes = bytes.remaining_bytes[len..].to_vec();
                 return Poll::Ready(Ok(()));
             }
-            if !bytes.skip_next {
-                return Poll::Ready(Ok(()));
-            }
-            bytes.skip_next = false;
         }
-        {
-            if self.bytes.try_lock().is_err() {
-                return Poll::Pending;
-            }
-        }
-        {
+        if self.has_pending_messages.load(Ordering::Relaxed) {
             let mut sub_fut = self.subscription.next();
 
             match Future::poll(Pin::new(&mut sub_fut), cx) {
@@ -336,14 +362,13 @@ impl tokio::io::AsyncRead for Object {
                     };
                     assert_ne!(message.data.len(), 0, "expect non-zero message size");
                     let len = cmp::min(buffer.remaining(), message.data.len());
-                    if len == 0 {
-                        // if we received a message of 0 bytes (can this happen?),
-                        // we should return Poll::Pending. Otherwise, returning Poll::Ready
-                        // with no bytes written will be interpreted as end of stream
-                        return Poll::Pending;
-                    }
+                    //if len == 0 {
+                    // if we received a message of 0 bytes (can this happen?),
+                    // we should return Poll::Pending. Otherwise, returning Poll::Ready
+                    // with no bytes written will be interpreted as end of stream
+                    //    return Poll::Pending;
+                    //}
                     buffer.put_slice(&message.data[..len]);
-
                     if message.data.len() > len {
                         bytes
                             .remaining_bytes
@@ -352,13 +377,15 @@ impl tokio::io::AsyncRead for Object {
 
                     if let Some(message_info) = message.jetstream_message_info() {
                         if message_info.pending == 0 {
-                            bytes.skip_next = true;
+                            self.has_pending_messages.store(false, Ordering::Relaxed);
                         }
                     }
                     Poll::Ready(Ok(()))
                 }
                 Poll::Ready(None) => Poll::Ready(Ok(())),
             }
+        } else {
+            Poll::Ready(Ok(()))
         }
     }
 }
@@ -432,11 +459,13 @@ impl ObjectStore {
     }
 
     /// Put will place the contents from the given reader into this object-store.
+    /// Note that the reader uses blocking reads so this call should not be used with blocking io
     ///
     /// # Example
     ///
     /// ```
     /// # use nats::object_store::Config;
+    /// # use tokio::io::AsyncReadExt as _;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// # let client = nats::connect("demo.nats.io").await?;
@@ -450,6 +479,10 @@ impl ObjectStore {
     /// let bytes = vec![0, 1, 2, 3, 4];
     /// let info = bucket.put("foo", &mut bytes.as_slice()).await?;
     /// assert_eq!(bucket.info("foo").await.unwrap(), info);
+    /// # // read back to verify
+    /// # let mut result = Vec::new();
+    /// # bucket.get("foo").await.unwrap().read_to_end(&mut result).await?;
+    /// # assert_eq!(&bytes, &result);
     ///
     /// # context.delete_object_store("put").await?;
     /// # Ok(())
@@ -468,7 +501,7 @@ impl ObjectStore {
             ));
         }
 
-        // Fetch any existing object info, if ther is any for later use.
+        // Fetch any existing object info, if there is any for later use.
         let maybe_existing_object_info = match self.info(&object_name).await {
             Ok(object_info) => Some(object_info),
             Err(_) => None,
@@ -536,13 +569,13 @@ impl ObjectStore {
         Ok(object_info)
     }
 
-    /// Get an existing objecto by name.
+    /// Get an existing object by name.
     ///
     /// # Example
     ///
     /// ```
-    /// use std::io::Read;
-    /// use tokio::io::AsyncReadExt;
+    /// use std::io::Read as _;
+    /// use tokio::io::AsyncReadExt as _;
     /// # use nats::object_store::Config;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
@@ -559,6 +592,7 @@ impl ObjectStore {
     ///
     /// let mut result = Vec::new();
     /// bucket.get("foo").await.unwrap().read_to_end(&mut result).await?;
+    /// # assert_eq!(&bytes, &result);
     ///
     /// # context.delete_object_store("get").await?;
     /// # Ok(())
@@ -697,7 +731,7 @@ impl ObjectStore {
             Watch {
                 subscription: Box::pin(subscription.stream()),
             }
-            .as_stream(),
+            .into_stream(),
         ))
     }
 }
@@ -709,7 +743,7 @@ pub struct Watch {
 
 impl Watch {
     // convert into unpinned stream
-    fn as_stream(mut self) -> impl Stream<Item = ObjectInfo> {
+    fn into_stream(mut self) -> impl Stream<Item = ObjectInfo> {
         async_stream::stream! {
             while let Some(message) = self.subscription.next().await {
                 yield serde_json::from_slice(&message.data).unwrap();

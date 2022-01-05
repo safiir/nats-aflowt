@@ -405,12 +405,12 @@ impl Client {
     }
 
     /// Subscribe to a subject with a message preprocessor.
-    pub(crate) async fn subscribe_with_preprocessor(
+    pub(crate) async fn subscribe_with_preprocessor<'a>(
         &self,
         subject: &str,
         queue_group: Option<&str>,
         message_processor: Pin<Box<dyn Preprocessor>>,
-    ) -> io::Result<(u64, crate::SubscriptionReceiver<Message>)> {
+    ) -> io::Result<(u64, crate::subscription::SubscriptionReceiver<Message>)> {
         inject_delay().await;
 
         let mut write = self.state.write.lock().await;

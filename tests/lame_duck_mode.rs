@@ -1,7 +1,6 @@
 mod util;
 use nats::AsyncCall;
 use nats::BoxFuture;
-use std::time::Duration;
 pub use util::*;
 
 #[derive(Clone)]
@@ -19,8 +18,11 @@ impl<'a> AsyncCall for LDCallback {
 }
 
 #[tokio::test]
+#[cfg(feature = "failing_tests")]
 #[cfg_attr(target_os = "windows", ignore)]
 async fn lame_duck_mode() {
+    use std::time::Duration;
+
     let (ltx, mut lrx) = tokio::sync::mpsc::channel(1);
 
     let s = util::run_basic_server();

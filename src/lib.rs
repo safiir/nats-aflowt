@@ -10,7 +10,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#![feature(async_closure)]
 
 //! A Rust client for the NATS.io ecosystem.
 //!
@@ -213,7 +212,7 @@ mod subscription;
 pub mod header;
 
 pub use futures::future::BoxFuture;
-/// Stream, as used by this crate. re-export of futures::Stream
+/// Stream, as used by this crate. re-export of `futures::Stream`
 pub use futures::Stream;
 
 /// `JetStream` stream management and consumers.
