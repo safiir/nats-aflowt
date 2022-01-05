@@ -326,8 +326,6 @@ impl tokio::io::AsyncRead for Object {
         }
         {
             let mut sub_fut = self.subscription.next();
-            //pin_utils::pin_mut!(sub_fut);
-            //match Future::poll(Pin::new(&mut self.subscription.next()), cx) {
 
             match Future::poll(Pin::new(&mut sub_fut), cx) {
                 Poll::Pending => Poll::Pending,
@@ -336,6 +334,7 @@ impl tokio::io::AsyncRead for Object {
                         Err(_) => return Poll::Pending,
                         Ok(guard) => guard,
                     };
+                    assert_ne!(message.data.len(), 0, "expect non-zero message size");
                     let len = cmp::min(buffer.remaining(), message.data.len());
                     if len == 0 {
                         // if we received a message of 0 bytes (can this happen?),
@@ -664,8 +663,7 @@ impl ObjectStore {
     ///   ..Default::default()
     /// }).await?;
     ///
-    /// let watch = bucket.watch().await?;
-    /// pin_utils::pin_mut!(watch);
+    /// let mut watch = bucket.watch().await?;
     ///
     /// let bytes = vec![0, 1, 2, 3, 4];
     /// bucket.put("foo", &mut bytes.as_slice()).await?;
@@ -685,7 +683,7 @@ impl ObjectStore {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn watch(&self) -> io::Result<impl Stream<Item = ObjectInfo>> {
+    pub async fn watch(&self) -> io::Result<Pin<Box<dyn Stream<Item = ObjectInfo>>>> {
         let subject = format!("$O.{}.M.>", &self.name);
         let subscription = self
             .context
@@ -695,10 +693,12 @@ impl ObjectStore {
             )
             .await?;
 
-        Ok(Watch {
-            subscription: Box::pin(subscription.stream()),
-        }
-        .as_stream())
+        Ok(Box::pin(
+            Watch {
+                subscription: Box::pin(subscription.stream()),
+            }
+            .as_stream(),
+        ))
     }
 }
 
@@ -708,7 +708,8 @@ pub struct Watch {
 }
 
 impl Watch {
-    pub fn as_stream(mut self) -> impl Stream<Item = ObjectInfo> {
+    // convert into unpinned stream
+    fn as_stream(mut self) -> impl Stream<Item = ObjectInfo> {
         async_stream::stream! {
             while let Some(message) = self.subscription.next().await {
                 yield serde_json::from_slice(&message.data).unwrap();

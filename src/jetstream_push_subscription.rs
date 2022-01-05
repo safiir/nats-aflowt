@@ -239,10 +239,12 @@ impl PushSubscription {
     /// # }
     /// ```
     pub fn messages(self) -> Pin<Box<dyn Stream<Item = Message>>> {
-        Box::pin(self.as_stream())
+        Box::pin(self.into_stream())
     }
 
-    pub fn as_stream(self) -> impl Stream<Item = Message> {
+    // convert the to unpinned stream
+    #[doc(hidden)]
+    fn into_stream(self) -> impl Stream<Item = Message> {
         async_stream::stream! {
             while let Some(message) = self.next().await {
                 yield message;
@@ -270,7 +272,7 @@ impl PushSubscription {
     /// # }
     /// ```
     pub fn stream(self) -> Pin<Box<dyn Stream<Item = Message>>> {
-        Box::pin(self.as_stream())
+        Box::pin(self.into_stream())
     }
 
     /// Attach a closure to handle messages. This closure will execute in a

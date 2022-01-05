@@ -691,7 +691,6 @@ impl JetStream {
         let maybe_headers = if let Some(options) = maybe_options {
             let mut headers = maybe_headers.map_or_else(HeaderMap::default, HeaderMap::clone);
 
-            eprintln!("publish 0: subject {}", subject);
             if let Some(v) = options.id.as_ref() {
                 let entry = headers
                     .inner
@@ -727,7 +726,6 @@ impl JetStream {
 
                 entry.insert(v.to_string());
             }
-            eprintln!("publish 4");
 
             if let Some(v) = options.expected_last_subject_sequence.as_ref() {
                 let entry = headers

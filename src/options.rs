@@ -98,6 +98,7 @@ impl Default for Options {
 #[derive(Default)]
 struct Backoff {}
 impl AsyncCallRet<usize, Duration> for Backoff {
+    /// Perform async callback action
     fn call(&self, reconnects: usize) -> BoxFuture<'static, Duration> {
         Box::pin(backoff(reconnects))
     }
@@ -800,14 +801,16 @@ impl Default for AuthStyle {
     }
 }
 
-// custom trait for async callback: no params, no results
+/// Trait for async callback (no param & no results)
 pub trait AsyncCall: Send + Sync {
-    fn call(&self) -> BoxFuture<()>;
+    /// Perform async callback action
+    fn call(&self) -> BoxFuture<'_, ()>;
 }
 
 #[derive(Default)]
 pub(crate) struct Callback(Option<Box<dyn AsyncCall>>);
 impl Callback {
+    /// Perform async callback action
     pub async fn call(&self) {
         if let Some(callback) = self.0.as_ref() {
             callback.call().await;
@@ -826,9 +829,10 @@ impl fmt::Debug for Callback {
     }
 }
 
-// custom trait for async callback: no params, no results
+/// Trait for async callbacks with single arg and return type
 pub trait AsyncCallRet<Arg, Ret>: Send + Sync {
-    fn call(&self, arg: Arg) -> BoxFuture<Ret>;
+    /// Perform async callback action
+    fn call(&self, arg: Arg) -> BoxFuture<'_, Ret>;
 }
 
 pub(crate) struct ReconnectDelayCallback(Option<Box<dyn AsyncCallRet<usize, Duration>>>);
@@ -842,10 +846,12 @@ impl ReconnectDelayCallback {
     }
 }
 
+/// Trait for async error handler callback
 // NB(ss): the original api pass (&Client,&Error) but Client is not exported from the nats crate,
 // so I changed the interface to accept ServerInfo
 pub trait AsyncErrorCallback: Send + Sync {
-    fn call(&self, si: crate::ServerInfo, err: Error) -> BoxFuture<()>;
+    /// Perform async callback action
+    fn call(&self, si: crate::ServerInfo, err: Error) -> BoxFuture<'_, ()>;
 }
 
 pub(crate) struct ErrorCallback(Option<Box<dyn AsyncErrorCallback>>);

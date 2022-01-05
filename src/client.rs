@@ -559,7 +559,6 @@ impl Client {
         // Inject random delays when testing.
         inject_delay().await;
 
-        eprintln!("DBG: publishing on sub {}", subject);
         let server_info = self.server_info.lock().await;
         if headers.is_some() && !server_info.headers {
             return Err(Error::new(
@@ -738,7 +737,6 @@ impl Client {
             read.pings_out = 0;
             drop(read);
 
-            eprintln!("DBG: client run: delay");
             // Inject random delays when testing.
             inject_delay().await;
 

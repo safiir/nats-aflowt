@@ -671,15 +671,13 @@ impl Store {
     /// bucket.put("foo", b"fizz").await?;
     /// bucket.put("bar", b"buzz").await?;
     ///
-    /// let mut keys = bucket.keys().await?;
-    ///
-    /// assert_eq!(keys.next().await, Some("foo".to_string()));
-    /// assert_eq!(keys.next().await, Some("bar".to_string()));
-    /// #
+    /// let keys = kv.keys().await.unwrap().collect::<Vec<String>>().await;
+    /// assert!(keys.find("foo".to_string()).is_some());
+    /// assert!(keys.find("bar".to_string()).is_some());
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn keys(&self) -> io::Result<impl Stream<Item = String>> {
+    pub async fn keys(&self) -> io::Result<Pin<Box<dyn Stream<Item = String>>>> {
         let mut subject = String::new();
         subject.push_str(&self.prefix);
         subject.push_str(ALL_KEYS);
@@ -801,10 +799,12 @@ pub struct Keys {
 }
 
 impl Keys {
+    /// Returns stream of keys
     pub fn stream(self) -> Pin<Box<dyn Stream<Item = String>>> {
         Box::pin(self.into_stream())
     }
 
+    // convert into unpinned stream
     #[doc(hidden)]
     fn into_stream(mut self) -> impl Stream<Item = String> {
         async_stream::stream! {
@@ -851,10 +851,13 @@ pub struct History {
 }
 
 impl History {
+    /// Converts to stream of history entries
     pub fn stream(self) -> Pin<Box<dyn Stream<Item = Entry>>> {
         Box::pin(self.into_stream())
     }
 
+    // convert into unpinned stream
+    #[doc(hidden)]
     fn into_stream(mut self) -> impl Stream<Item = Entry> {
         async_stream::stream! {
             if !self.done {
@@ -900,10 +903,12 @@ pub struct Watch {
 }
 
 impl Watch {
+    /// Convert to stream of entries
     pub fn stream(self) -> Pin<Box<dyn Stream<Item = Entry>>> {
         Box::pin(self.into_stream())
     }
 
+    // convert into unpinned stream
     #[doc(hidden)]
     fn into_stream(mut self) -> impl Stream<Item = Entry> {
         async_stream::stream! {
