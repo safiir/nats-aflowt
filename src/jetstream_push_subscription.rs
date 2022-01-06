@@ -234,8 +234,8 @@ impl PushSubscription {
     /// # async fn main() -> std::io::Result<()> {
     /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
-    /// # context.add_stream("iter");
-    /// let mut subscription = context.subscribe("messages").await?.stream();
+    /// # context.add_stream("messages-100");
+    /// let mut subscription = context.subscribe("messages-100").await?.messages();
     /// while let Some(message) = subscription.next().await {
     ///     println!("Received message {:?}", message);
     /// }
@@ -267,8 +267,9 @@ impl PushSubscription {
     /// # async fn main() -> std::io::Result<()> {
     /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
-    /// # context.add_stream("iter");
-    /// # let mut sub = context.subscribe("messages").await?.stream();
+    /// # context.add_stream("stream");
+    /// let mut sub = context.subscribe("stream").await?.stream();
+    /// # context.publish("stream", "hello").await?;
     /// while let Some(message) = sub.next().await {
     ///     println!("Received message {:?}", message);
     /// }
@@ -425,7 +426,7 @@ impl PushSubscription {
     ///
     /// Example
     ///
-    /// ```no_run
+    /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// # let client = nats::connect("demo.nats.io").await?;
@@ -437,7 +438,6 @@ impl PushSubscription {
     /// let mut subscription = context.subscribe("process").await?;
     /// subscription.process(|message| {
     ///     println!("Received message {:?}", message);
-    ///
     ///     Ok(())
     /// }).await?;
     /// # Ok(())
@@ -461,7 +461,7 @@ impl PushSubscription {
     ///
     /// Example
     ///
-    /// ```no_run
+    /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// # let client = nats::connect("demo.nats.io").await?;
