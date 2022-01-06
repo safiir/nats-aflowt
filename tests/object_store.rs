@@ -203,9 +203,8 @@ async fn object_multiple_delete() {
 // TODO(ss): this test generates stack overflow.
 //   - fails whether server is local or demo.nats.io
 //   - Doc test for put() succeeds using very similar code
-//   -
-#[tokio::test]
 #[cfg(feature = "failing_tests")]
+#[tokio::test]
 async fn object_names() {
     let server = util::run_server("tests/configs/jetstream.conf");
     let client = nats::connect(&server.client_url()).await.unwrap();
