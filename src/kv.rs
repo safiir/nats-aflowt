@@ -705,7 +705,6 @@ impl Store {
     ///
     /// ```
     /// # use nats::kv::Config;
-    /// use futures::Future;
     /// use futures::stream::StreamExt;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
