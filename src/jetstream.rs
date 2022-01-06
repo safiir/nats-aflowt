@@ -798,7 +798,9 @@ impl JetStream {
     /// # async fn main() -> std::io::Result<()> {
     /// # let nc = nats::connect("demo.nats.io").await?;
     /// # let js = nats::jetstream::new(nc);
-    /// let sub = js.subscribe_with_options("foo", &SubscribeOptions::bind("existing_stream".to_string(), "existing_consumer".to_string())).await?;
+    /// let sub = js.subscribe_with_options("foo",
+    ///       &SubscribeOptions::bind("existing_stream".to_string(),
+    ///       "existing_consumer".to_string())).await?;
     /// # Ok(())
     /// # }
     /// ```
