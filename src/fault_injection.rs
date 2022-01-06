@@ -44,9 +44,6 @@ pub async fn inject_delay() {
 
     if fastrand::i32(..10) == 0 {
         let duration = fastrand::u64(..50);
-
-        //#[allow(clippy::cast_possible_truncation)]
-        //#[allow(clippy::cast_sign_loss)]
         tokio::time::sleep(Duration::from_millis(duration)).await;
     }
 
