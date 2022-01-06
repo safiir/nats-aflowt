@@ -54,21 +54,6 @@ pub struct Message {
     pub double_acked: Arc<AtomicBool>,
 }
 
-/*
-impl From<crate::_asynk::Message> for Message {
-    fn from(asynk: crate::_asynk::Message) -> Message {
-        Message {
-            subject: asynk.subject,
-            reply: asynk.reply,
-            data: asynk.data,
-            headers: asynk.headers,
-            client: asynk.client,
-            double_acked: asynk.double_acked,
-        }
-    }
-}
- */
-
 impl Message {
     /// Creates new empty `Message`, without a Client.
     /// Useful for passing `Message` data or creating `Message` instance without caring about `Client`,
