@@ -140,12 +140,10 @@ impl Client {
     /// Creates a new client that will begin connecting in the background.
     pub(crate) async fn connect(url: &str, options: Options) -> io::Result<Client> {
         // A channel for coordinating flushes.
-        //let (flush_kicker, flush_wanted) = channel::bounded(1);
         let (flush_kicker, mut flush_wanted) = tokio::sync::mpsc::channel(1);
 
         // Channels for coordinating initial connect.
         let (run_sender, run_receiver) = tokio::sync::oneshot::channel();
-        //let (pong_sender, pong_receiver) = channel::bounded::<()>(1);
         let (pong_sender, mut pong_receiver) = tokio::sync::mpsc::channel(1);
 
         // The client state.
@@ -176,7 +174,7 @@ impl Client {
 
         // Connector for creating the initial connection and reconnecting when
         // it is broken.
-        let connector = Connector::new(url, options.clone())?;
+        let connector = Connector::new(url, options.clone()).await?;
 
         // Spawn the async task responsible for:
         // - Maintaining a connection to the server and reconnecting when it is
@@ -184,7 +182,6 @@ impl Client {
         // - Reading messages from the server and processing them.
         // - Forwarding MSG operations to subscribers.
         let client = _client.clone();
-        //let close_callback = &options.close_callback;
         let opt = options.clone();
         tokio::spawn(async move {
             {

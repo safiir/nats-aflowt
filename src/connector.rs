@@ -51,55 +51,55 @@ pub(crate) struct Connector {
     tls_config: Arc<ClientConfig>,
 }
 
+/// load tls certs. This function uses blocking file io.
+/// load_native_certs could load a 300KB file (per docs.rs/rustls-native-certs)
+fn load_tls_certs(tls_options: Arc<Options>) -> io::Result<ClientConfig> {
+    // Include system root certificates.
+    //
+    // On Windows, some certificates cannot be loaded by rustls
+    // for whatever reason, so we simply skip them.
+    // See https://github.com/ctz/rustls-native-certs/issues/5
+    let roots = match rustls_native_certs::load_native_certs() {
+        Ok(store) => store.into_iter().map(|c| c.0).collect(),
+        Err(_) => Vec::new(),
+    };
+    let mut root_certs = crate::rustls::RootCertStore::empty();
+    let (_added, _ignored) = root_certs.add_parsable_certificates(&roots);
+
+    // Include user-provided certificates.
+    for path in &tls_options.certificates {
+        let f = std::fs::File::open(path)?;
+        let mut f = std::io::BufReader::new(f);
+        let certs = rustls_pemfile::certs(&mut f)?;
+        let (_added, _ignored) = root_certs.add_parsable_certificates(&certs);
+    }
+
+    let tls_config = tls_options
+        .tls_client_config
+        .clone()
+        .with_safe_defaults()
+        .with_root_certificates(root_certs);
+    let tls_config =
+        if let (Some(cert), Some(key)) = (&tls_options.client_cert, &tls_options.client_key) {
+            tls_config
+                .with_single_cert(auth_utils::load_certs(cert)?, auth_utils::load_key(key)?)
+                .map_err(|err| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("invalid client certificate and key pair: {}", err),
+                    )
+                })?
+        } else {
+            tls_config.with_no_client_auth()
+        };
+    Ok(tls_config)
+}
+
 impl Connector {
     /// Creates a new connector with the URLs and options.
-    pub(crate) fn new(url: &str, options: Arc<Options>) -> io::Result<Connector> {
-        // Include system root certificates.
-        //
-        // On Windows, some certificates cannot be loaded by rustls
-        // for whatever reason, so we simply skip them.
-        // See https://github.com/ctz/rustls-native-certs/issues/5
-        let roots = match rustls_native_certs::load_native_certs() {
-            Ok(store) => store.into_iter().map(|c| c.0).collect(),
-            Err(_) => Vec::new(),
-        };
-        let mut root_certs = crate::rustls::RootCertStore::empty();
-        let (_added, _ignored) = root_certs.add_parsable_certificates(&roots);
-
-        // Include user-provided certificates.
-        for path in &options.certificates {
-            let f = std::fs::File::open(path)?;
-            let mut f = std::io::BufReader::new(f);
-            let certs = rustls_pemfile::certs(&mut f)?;
-            let (_added, _ignored) = root_certs.add_parsable_certificates(&certs);
-
-            /*
-            root_certs
-                .add(contents.into())
-                .map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "invalid certificate file")
-                })?;
-             */
-        }
-
-        let tls_config = options
-            .tls_client_config
-            .clone()
-            .with_safe_defaults()
-            .with_root_certificates(root_certs);
-        let tls_config =
-            if let (Some(cert), Some(key)) = (&options.client_cert, &options.client_key) {
-                tls_config
-                    .with_single_cert(auth_utils::load_certs(cert)?, auth_utils::load_key(key)?)
-                    .map_err(|err| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidInput,
-                            format!("invalid client certificate and key pair: {}", err),
-                        )
-                    })?
-            } else {
-                tls_config.with_no_client_auth()
-            };
+    pub(crate) async fn new(url: &str, options: Arc<Options>) -> io::Result<Connector> {
+        let tls_options = options.clone();
+        let tls_config = tokio::task::spawn_blocking(move || load_tls_certs(tls_options)).await??;
 
         let mut connector = Connector {
             attempts: HashMap::new(),
@@ -110,11 +110,10 @@ impl Connector {
         for url in url.split(',') {
             connector.add_url(url)?;
         }
-
         Ok(connector)
     }
 
-    /// Adds an URL to the list of servers.
+    /// Adds a URL to the list of servers.
     pub(crate) fn add_url(&mut self, url: &str) -> io::Result<()> {
         let server = Server::new(url)?;
         self.attempts.insert(server, 0);
@@ -478,7 +477,6 @@ impl Server {
 #[derive(Debug, Clone)]
 pub(crate) struct NatsStream {
     flavor: Arc<Flavor>,
-    //write_timeout: Option<Duration>,
 }
 
 #[derive(Debug)]
@@ -488,11 +486,6 @@ enum Flavor {
     Tls(Mutex<TlsStream<TcpStream>>), //Tls(Box<Mutex<TlsStream<TcpStream>>>),
 }
 
-//struct TlsStream {
-//    tcp: TcpStream,
-//    session: ClientConnection,
-//}
-
 impl NatsStream {
     fn new_tcp(tcp: TcpStream) -> Self {
         tcp.set_nodelay(true).ok(); // ignore err if not supported
@@ -500,15 +493,12 @@ impl NatsStream {
             flavor: Arc::new(Flavor::Tcp(Mutex::new(tcp))),
         }
     }
+
     fn new_tls(tls: TlsStream<TcpStream>) -> Self {
         Self {
             flavor: Arc::new(Flavor::Tls(Mutex::new(tls))),
         }
     }
-
-    //pub(crate) async fn set_write_timeout(&mut self, timeout: Option<Duration>) {
-    //    self.write_timeout = timeout;
-    //}
 
     /// Will attempt to shutdown the underlying stream.
     pub(crate) async fn shutdown(&mut self) {
