@@ -587,6 +587,7 @@ impl PushSubscription {
         self.unsubscribe().await
     }
 
+    // TODO(ss): this doc test fails, currently set to no_run (compile-only)
     /// Send an unsubscription then flush the connection,
     /// allowing any unprocessed messages to be handled
     /// by a handler function if one is configured.
@@ -607,16 +608,16 @@ impl PushSubscription {
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
-    /// # context.add_stream("drain").await?;
+    /// let context = nats::jetstream::new(client);
+    /// context.add_stream("drain").await?;
     /// let mut subscription = context.subscribe("drain").await?;
     /// context.publish("drain", "foo").await?;
-    /// //context.publish("drain", "bar").await?;
-    /// //context.publish("drain", "baz").await?;
+    /// context.publish("drain", "bar").await?;
+    /// context.publish("drain", "baz").await?;
     ///
-    /// //subscription.drain().await?;
+    /// subscription.drain().await?;
     ///
-    /// //assert!(subscription.next().await.is_none());
+    /// assert!(subscription.next().await.is_none());
     ///
     /// # Ok(())
     /// # }
