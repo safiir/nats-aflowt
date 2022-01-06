@@ -137,7 +137,7 @@ impl Options {
     /// `Options` for establishing a new NATS `Connection`.
     ///
     /// # Example
-    /// ```no_run
+    /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// let options = nats::Options::new();
@@ -717,7 +717,7 @@ impl Options {
     /// with `tls://host:port` instead of `nats://host:port`.
     ///
     /// # Examples
-    /// ```no_run
+    /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
