@@ -21,7 +21,6 @@ use std::time::Duration;
 
 use crate::header::{self, HeaderMap};
 use crate::jetstream::{Error, ErrorCode, JetStream};
-//use crate::jetstream_push_subscription::PushSubscription;
 use crate::jetstream_types::*;
 use crate::message::Message;
 use crate::Stream;
@@ -810,11 +809,9 @@ impl Keys {
         async_stream::stream! {
             if !self.done {
                 while let Some(message) = self.subscription.next().await {
-                    // println!("{:?}", &message);
                     // If there are no more pending messages we'll stop after delivering the key
                     // derived from this message.
                     if let Some(info) = message.jetstream_message_info() {
-                        // println!("{:?}", &info);
                         if info.pending == 0 {
                             self.done = true;
                         }
