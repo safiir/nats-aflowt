@@ -591,7 +591,8 @@ impl PushSubscription {
         self.unsubscribe().await
     }
 
-    // TODO(ss): this doc test fails, currently set to no_run (compile-only)
+    // TODO(ss): unexplained: I was getting hangs on this doc test, then I
+    //    changed the sub_name to have a random component and it seems to work
     /// Send an unsubscription then flush the connection,
     /// allowing any unprocessed messages to be handled
     /// by a handler function if one is configured.
@@ -608,16 +609,17 @@ impl PushSubscription {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = nats::connect("demo.nats.io").await?;
-    /// let context = nats::jetstream::new(client);
-    /// context.add_stream("drain").await?;
-    /// let mut subscription = context.subscribe("drain").await?;
-    /// context.publish("drain", "foo").await?;
-    /// context.publish("drain", "bar").await?;
-    /// context.publish("drain", "baz").await?;
+    /// # let context = nats::jetstream::new(client);
+    /// # let sub_name = format!("drain_{}", rand::random::<u32>());
+    /// # context.add_stream(sub_name.as_str()).await?;
+    /// # let mut subscription = context.subscribe(&sub_name).await?;
+    /// # context.publish(&sub_name, "foo").await?;
+    /// # context.publish(&sub_name, "bar").await?;
+    /// # context.publish(&sub_name, "baz").await?;
     ///
     /// subscription.drain().await?;
     ///
