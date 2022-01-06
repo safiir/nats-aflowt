@@ -18,7 +18,6 @@ impl<'a> AsyncCall for LDCallback {
 }
 
 #[tokio::test]
-#[cfg(feature = "failing_tests")]
 #[cfg_attr(target_os = "windows", ignore)]
 async fn lame_duck_mode() {
     use std::time::Duration;
