@@ -362,12 +362,14 @@ impl tokio::io::AsyncRead for Object {
                     };
                     assert_ne!(message.data.len(), 0, "expect non-zero message size");
                     let len = cmp::min(buffer.remaining(), message.data.len());
-                    //if len == 0 {
-                    // if we received a message of 0 bytes (can this happen?),
+                    /*
+                    // TODO(ss): if we received a message of 0 bytes (can this happen?),
                     // we should return Poll::Pending. Otherwise, returning Poll::Ready
                     // with no bytes written will be interpreted as end of stream
-                    //    return Poll::Pending;
-                    //}
+                    if len == 0 {
+                        return Poll::Pending;
+                    }
+                    */
                     buffer.put_slice(&message.data[..len]);
                     if message.data.len() > len {
                         bytes
