@@ -483,7 +483,6 @@ impl Connection {
     /// ```
     /// # #![feature(async_closure)]
     /// use futures::stream::StreamExt;
-    /// use pin_utils::pin_mut;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::connect("demo.nats.io").await?;
