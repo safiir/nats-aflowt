@@ -98,7 +98,7 @@ impl PushSubscription {
 
     /// Preprocesses the given message.
     /// Returns true if the message was processed and should be filtered out from the user's view.
-    async fn preprocess(&self, message: &Message) -> bool {
+    async fn should_skip(&self, message: &Message) -> bool {
         if message.is_flow_control() {
             message.respond(b"").await.ok();
             return true;
@@ -126,8 +126,9 @@ impl PushSubscription {
     /// # context.publish("next", "hello").await?;
     ///
     /// # let subscription = context.subscribe("next").await?;
-    /// if let Some(message) = subscription.next().await {
-    ///     println!("Received {}", message);
+    /// match subscription.next().await {
+    ///     Some(message) => println!("Received: '{}'", message),
+    ///     None => println!("No more messages"),
     /// }
     /// # Ok(())
     /// # }
@@ -136,9 +137,10 @@ impl PushSubscription {
         loop {
             match self.0.messages.recv().await {
                 Some(message) => {
-                    if !self.preprocess(&message).await {
-                        return Some(message);
+                    if self.should_skip(&message).await {
+                        continue;
                     }
+                    return Some(message);
                 }
                 None => return None,
             }
@@ -169,9 +171,10 @@ impl PushSubscription {
         loop {
             match self.0.messages.try_recv().await {
                 Some(message) => {
-                    if !self.preprocess(&message).await {
-                        return Some(message);
+                    if self.should_skip(&message).await {
+                        continue;
                     }
+                    return Some(message);
                 }
                 None => return None,
             }
@@ -199,9 +202,10 @@ impl PushSubscription {
         loop {
             match tokio::time::timeout(timeout, self.0.messages.recv()).await {
                 Ok(Some(message)) => {
-                    if !self.preprocess(&message).await {
-                        return Ok(message);
+                    if self.should_skip(&message).await {
+                        continue;
                     }
+                    return Ok(message);
                 }
                 Ok(None) => {
                     return Err(io::Error::new(
