@@ -36,8 +36,7 @@ async fn object_random() {
     bucket.info("FOO").await.unwrap_err();
 
     let mut rng = rand::thread_rng();
-    let mut bytes = Vec::with_capacity(16 * 1024 * 1024 + 22);
-    bytes.resize(16 * 1024 * 1024 + 22, 0);
+    let mut bytes = vec![0; 16 * 1024 * 1024 + 22];
     rng.try_fill_bytes(&mut bytes).unwrap();
 
     bucket.put("FOO", &mut bytes.as_slice()).await.unwrap();
@@ -68,8 +67,7 @@ async fn object_random() {
 
     assert_eq!(result, bytes);
 
-    let mut bytes = Vec::with_capacity(1024 * 1024 + 22);
-    bytes.resize(1024 * 1024 + 22, 0);
+    let mut bytes = vec![0; 1024 * 1024 + 22];
     rng.try_fill_bytes(&mut bytes).unwrap();
     bucket.put("FOO", &mut bytes.as_slice()).await.unwrap();
 
