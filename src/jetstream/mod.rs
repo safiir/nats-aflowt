@@ -1,4 +1,4 @@
-// Copyright 2020-2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -118,9 +118,11 @@ use tokio::sync::Mutex;
 
 const ORDERED_IDLE_HEARTBEAT: Duration = Duration::from_nanos(5_000_000_000);
 
-// TODO re-organize this into a jetstream directory
-pub use crate::jetstream_push_subscription::PushSubscription;
-pub use crate::jetstream_types::*;
+mod push_subscription;
+mod types;
+
+pub use push_subscription::PushSubscription;
+pub use types::*;
 
 use crate::{
     header::{self, HeaderMap},

@@ -1,4 +1,4 @@
-// Copyright 2020-2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::{io::BufReader, io::BufWriter, sync::Mutex};
 
-use crate::connector::{Connector, NatsStream};
+use crate::connector::{Connector, NatsStream, ServerAddress};
 use crate::message::Message;
 use crate::proto::{self, ClientOp, ServerOp};
 use crate::BoxFuture;
@@ -138,7 +138,7 @@ pub struct Client {
 
 impl Client {
     /// Creates a new client that will begin connecting in the background.
-    pub(crate) async fn connect(url: &str, options: Options) -> io::Result<Client> {
+    pub(crate) async fn connect(urls: Vec<ServerAddress>, options: Options) -> io::Result<Client> {
         // A channel for coordinating flushes.
         let (flush_kicker, mut flush_wanted) = tokio::sync::mpsc::channel(1);
 
@@ -174,7 +174,7 @@ impl Client {
 
         // Connector for creating the initial connection and reconnecting when
         // it is broken.
-        let connector = Connector::new(url, options.clone()).await?;
+        let connector = Connector::new(urls, options.clone()).await?;
 
         // Spawn the async task responsible for:
         // - Maintaining a connection to the server and reconnecting when it is
@@ -840,7 +840,7 @@ impl Client {
             match op {
                 ServerOp::Info(server_info) => {
                     for url in &server_info.connect_urls {
-                        connector.add_url(url).ok();
+                        connector.add_server(url.parse()?);
                     }
                     self.process_info(&server_info, connector).await;
                     *self.server_info.lock().await = server_info;

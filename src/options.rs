@@ -1,4 +1,4 @@
-// Copyright 2020-2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -25,6 +25,7 @@ use crate::rustls::WantsCipherSuites;
 use crate::secure_wipe::SecureString;
 use crate::BoxFuture;
 use crate::Connection;
+use crate::IntoServerList;
 
 /// Connect options.
 pub struct Options {
@@ -496,7 +497,10 @@ impl Options {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn connect(self, nats_url: &str) -> io::Result<Connection> {
+    pub async fn connect<I>(self, nats_url: I) -> io::Result<Connection>
+    where
+        I: IntoServerList,
+    {
         Connection::connect_with_options(nats_url, self).await
     }
 

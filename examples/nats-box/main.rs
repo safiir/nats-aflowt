@@ -28,7 +28,7 @@ impl AsyncCall for PrintCallback {
 struct Cli {
     /// NATS server
     #[structopt(long, short, default_value = "demo.nats.io")]
-    server: String,
+    server: nats::ServerAddress,
 
     /// User Credentials File
     #[structopt(long = "creds", group = "auth")]
@@ -71,7 +71,7 @@ async fn main() -> CliResult {
         .with_name("nats-box rust example")
         .disconnect_callback(PrintCallback::new("Disconnected"))
         .reconnect_callback(PrintCallback::new("Reconnected"))
-        .connect(&args.server)
+        .connect(args.server)
         .await?;
 
     match args.cmd {

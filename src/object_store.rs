@@ -1,4 +1,4 @@
-// Copyright 2020-2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -14,8 +14,12 @@
 //! Support for Object Store.
 //! This feature is experimental and the API may change.
 
-use crate::Stream;
-use crate::{header::HeaderMap, jetstream::JetStream, jetstream_types::*, Message};
+use crate::{
+    header::HeaderMap,
+    jetstream::{DateTime, DiscardPolicy, JetStream, StorageType, StreamConfig, SubscribeOptions},
+    Message, Stream,
+};
+
 use chrono::Utc;
 use futures::{Future, StreamExt};
 use lazy_static::lazy_static;

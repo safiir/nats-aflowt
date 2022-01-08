@@ -1,4 +1,4 @@
-// Copyright 2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -20,8 +20,11 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use crate::header::{self, HeaderMap};
-use crate::jetstream::{Error, ErrorCode, JetStream};
-use crate::jetstream_types::*;
+use crate::jetstream::{
+    DateTime, Error, ErrorCode, JetStream, StorageType, StreamConfig, StreamInfo, StreamMessage,
+    SubscribeOptions,
+};
+
 use crate::message::Message;
 use crate::Stream;
 use lazy_static::lazy_static;
@@ -761,13 +764,21 @@ impl Store {
     }
 
     /// Returns a stream which iterates over each entry as they happen.
-    pub async fn watch(&self) -> io::Result<Pin<Box<dyn Stream<Item = Entry>>>> {
-        let subject = ">";
+    pub async fn watch_all(&self) -> io::Result<Pin<Box<dyn Stream<Item = Entry>>>> {
+        self.watch(">").await
+    }
+
+    /// Returns a stream which iterates over each entry as they happen.
+    pub async fn watch<T: AsRef<str>>(
+        &self,
+        key: T,
+    ) -> io::Result<Pin<Box<dyn Stream<Item = Entry>>>> {
+        let subject = format!("{}{}", self.prefix, key.as_ref());
 
         let subscription = self
             .context
             .subscribe_with_options(
-                subject,
+                subject.as_str(),
                 &SubscribeOptions::ordered()
                     .deliver_last_per_subject()
                     .enable_flow_control()

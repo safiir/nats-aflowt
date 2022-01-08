@@ -1,4 +1,4 @@
-// Copyright 2020-2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -19,8 +19,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use crate::jetstream::JetStream;
-use crate::jetstream_types::*;
+use crate::jetstream::{AckPolicy, ConsumerInfo, ConsumerOwnership, JetStream};
 use crate::message::Message;
 use crate::DEFAULT_FLUSH_TIMEOUT;
 
@@ -462,6 +461,7 @@ impl PushSubscription {
     /// Example
     ///
     /// ```
+    /// # use std::time::Duration;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// # let client = nats::connect("demo.nats.io").await?;
@@ -471,7 +471,7 @@ impl PushSubscription {
     /// # context.publish("process_timeout", "hello").await?;
     /// #
     /// let mut subscription = context.subscribe("process_timeout").await?;
-    /// subscription.process_timeout(std::time::Duration::from_secs(1), |message| {
+    /// subscription.process_timeout(Duration::from_secs(1), |message| {
     ///     println!("Received message {:?}", message);
     ///
     ///     Ok(())

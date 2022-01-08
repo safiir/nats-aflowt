@@ -1,4 +1,16 @@
-#![allow(dead_code)]
+// Copyright 2020-2022 The NATS Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use std::io::{BufRead, BufReader};
 use std::net::TcpStream;
 use std::path::PathBuf;
@@ -14,6 +26,8 @@ use regex::Regex;
 pub struct Server {
     child: Child,
     logfile: PathBuf,
+    #[allow(dead_code)]
+    pidfile: PathBuf,
 }
 
 lazy_static! {
@@ -56,6 +70,7 @@ impl Server {
     }
 
     // Allow user/pass override.
+    #[allow(dead_code)]
     pub fn client_url_with(&self, user: &str, pass: &str) -> String {
         use url::Url;
         let mut url = Url::parse(&self.client_url()).expect("could not parse");
@@ -82,11 +97,23 @@ impl Server {
         }
         panic!("no client addr info");
     }
+
+    #[allow(dead_code)]
+    pub fn client_pid(&self) -> usize {
+        String::from_utf8(fs::read(self.pidfile.clone()).unwrap())
+            .unwrap()
+            .parse()
+            .unwrap()
+    }
 }
 
-pub fn set_lame_duck_mode() {
+#[allow(dead_code)]
+pub fn set_lame_duck_mode(s: &Server) {
     let mut cmd = Command::new("nats-server");
-    cmd.arg("--signal").arg("ldm").spawn().unwrap();
+    cmd.arg("--signal")
+        .arg(format!("ldm={}", s.client_pid()))
+        .spawn()
+        .unwrap();
 }
 
 /// Starts a local NATS server with the given config that gets stopped and cleaned up on drop.
@@ -94,6 +121,7 @@ pub fn run_server(cfg: &str) -> Server {
     let id = nuid::next();
     let logfile = env::temp_dir().join(format!("nats-server-{}.log", id));
     let store_dir = env::temp_dir().join(format!("store-dir-{}", id));
+    let pidfile = env::temp_dir().join(format!("nats-server-{}.pid", id));
 
     // Always use dynamic ports so tests can run in parallel.
     // Create env for a storage directory for jetstream.
@@ -103,7 +131,9 @@ pub fn run_server(cfg: &str) -> Server {
         .arg("-p")
         .arg("-1")
         .arg("-l")
-        .arg(logfile.as_os_str());
+        .arg(logfile.as_os_str())
+        .arg("-P")
+        .arg(pidfile.as_os_str());
 
     if !cfg.is_empty() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -112,15 +142,21 @@ pub fn run_server(cfg: &str) -> Server {
 
     let child = cmd.spawn().unwrap();
 
-    Server { child, logfile }
+    Server {
+        child,
+        logfile,
+        pidfile,
+    }
 }
 
 /// Starts a local basic NATS server that gets stopped and cleaned up on drop.
+#[allow(dead_code)]
 pub fn run_basic_server() -> Server {
     run_server("")
 }
 
 // Helper function to return server and client.
+#[allow(dead_code)]
 pub async fn run_basic_jetstream() -> (Server, Connection, JetStream) {
     let s = run_server("tests/configs/jetstream.conf");
     let nc = nats::connect(&s.client_url()).await.unwrap();

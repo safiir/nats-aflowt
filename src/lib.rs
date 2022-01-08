@@ -1,4 +1,4 @@
-// Copyright 2020-2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -200,8 +200,6 @@ mod auth_utils;
 mod client;
 mod connect;
 mod connector;
-mod jetstream_push_subscription;
-mod jetstream_types;
 mod message;
 mod options;
 mod proto;
@@ -254,7 +252,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-//pub use jetstream::JetStreamOptions;
+pub use connector::{IntoServerList, ServerAddress};
+pub use jetstream::JetStreamOptions;
 pub use message::Message;
 pub use options::{AsyncCall, AsyncCallRet, AsyncErrorCallback, Options};
 pub use subscription::{Handler, Subscription, SubscriptionReceiver};
@@ -363,27 +362,75 @@ impl Drop for Inner {
     }
 }
 
-/// Connect to a NATS server at the given url.
+/// Connect to one or more NATS servers at the given URLs.
 ///
-/// # Example
+/// The [`IntoServerList`] trait allows to pass URLs in various different formats. Furthermore, if
+/// you need more control of the connection's parameters, use [`Options::connect()`].
+///
+/// # Examples
+///
+/// If no scheme is provided, the `nats://` scheme is assumed. The default port is `4222`.
 /// ```
 /// # #[tokio::main]
 /// # async fn main() -> std::io::Result<()> {
 /// let nc = nats::connect("demo.nats.io").await?;
-/// # Ok(())
+/// # Ok::<(), std::io::Error>(())
 /// # }
 /// ```
-pub async fn connect(nats_url: &str) -> io::Result<Connection> {
-    Options::new().connect(nats_url).await
+///
+///
+/// It is possible to provide several URLs as a comma separated list.
+/// ```
+/// # #[tokio::main]
+/// # async fn main() -> std::io::Result<()> {
+/// let nc = nats::connect("demo.nats.io,tls://demo.nats.io:4443").await?;
+/// # Ok::<(), std::io::Error>(())
+/// # }
+/// ```
+///
+/// Alternatively, an array of strings can be passed.
+/// ```
+/// # use nats::IntoServerList;
+/// # #[tokio::main]
+/// # async fn main() -> std::io::Result<()> {
+/// let nc = nats::connect(&["demo.nats.io", "tls://demo.nats.io:4443"]).await?;
+/// # Ok::<(), std::io::Error>(())
+/// # }
+/// ```
+///
+/// Instead of using strings, [`ServerAddress`]es can be used directly as well. This is handy for
+/// validating user input.
+/// ```
+/// use std::io;
+/// use structopt::StructOpt;
+/// use nats::ServerAddress;
+///
+/// #[derive(Debug, StructOpt)]
+/// struct Config {
+///     #[structopt(short, long = "server", default_value = "demo.nats.io")]
+///     servers: Vec<ServerAddress>,
+/// }
+/// #[tokio::main]
+/// async fn main() -> io::Result<()> {
+///     let config = Config::from_args();
+///     let nc = nats::connect(config.servers).await?;
+///     Ok(())
+/// }
+/// ```
+pub async fn connect<I: IntoServerList>(nats_urls: I) -> io::Result<Connection> {
+    Options::new().connect(nats_urls).await
 }
 
 impl Connection {
-    /// Connects on a URL with the given options.
-    pub(crate) async fn connect_with_options(
-        url: &str,
-        options: Options,
-    ) -> io::Result<Connection> {
-        let client = Client::connect(url, options).await?;
+    /// Connects on one or more NATS servers with the given options.
+    ///
+    /// For more on how to use [`IntoServerList`] trait see [`crate::connect()`].
+    pub(crate) async fn connect_with_options<I>(urls: I, options: Options) -> io::Result<Connection>
+    where
+        I: IntoServerList,
+    {
+        let urls = urls.into_server_list()?;
+        let client = Client::connect(urls, options).await?;
         client.flush(DEFAULT_FLUSH_TIMEOUT).await?;
         Ok(Connection(Arc::new(Inner { client })))
     }
@@ -566,7 +613,7 @@ impl Connection {
     /// # async fn main() -> std::io::Result<()> {
     /// # let nc = nats::connect("demo.nats.io").await?;
     /// # nc.subscribe("foo").await?.with_async_handler( async move |m| { m.respond("ans=42").await?; Ok(()) });
-    /// let mut sub = nc.request_multi("foo", "Help").await?.stream();
+    /// let mut sub = nc.request_multi("foo", "What is the answer?").await?.stream();
     /// if let Some(msg) = sub.next().await { /* ... */ }
     /// # Ok(())
     /// # }

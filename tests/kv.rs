@@ -1,3 +1,4 @@
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -147,8 +148,64 @@ async fn key_value_watch() {
         .await
         .unwrap();
 
-    let mut watch = kv.watch().await.unwrap();
+    let mut watch = kv.watch("foo.>").await.unwrap();
+    // check if we get only foo.bar watch event.
+    kv.create("foo", b"ignored").await.unwrap();
+    kv.put("foo.bar", b"lorem").await.unwrap();
+    let entry = watch.next().await.unwrap();
+    assert_eq!(entry.key, "foo.bar".to_string());
+    assert_eq!(entry.value, b"lorem");
+    // expect revision 2, instead of 1 as two values were put.
+    assert_eq!(entry.revision, 2);
 
+    // check if we only get foo.bar.z events
+    kv.put("foo", b"ignored").await.unwrap();
+    kv.put("foo.bar.z", b"ipsum").await.unwrap();
+    let entry = watch.next().await.unwrap();
+    assert_eq!(entry.key, "foo.bar.z".to_string());
+    assert_eq!(entry.value, b"ipsum");
+    // expect revision 4, as two values were inserted.
+    assert_eq!(entry.revision, 4);
+
+    kv.delete("foo").await.unwrap();
+    kv.delete("foo.bar").await.unwrap();
+    let entry = watch.next().await.unwrap();
+    assert_eq!(entry.operation, Operation::Delete);
+}
+
+#[tokio::test]
+async fn key_value_watch_all() {
+    let server = util::run_server("tests/configs/jetstream.conf");
+    let client = nats::connect(&server.client_url()).await.unwrap();
+    let context = nats::jetstream::new(client);
+
+    let kv = context
+        .create_key_value(&nats::kv::Config {
+            bucket: "WATCH".to_string(),
+            history: 10,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    // create second Store to see if
+    // https://github.com/nats-io/nats.rs/issues/286 is still affecting our codebase.
+    // It was causing one store being able to read data from another.
+    let skv = context
+        .create_key_value(&nats::kv::Config {
+            bucket: "TEST_CONFLICT".to_string(),
+            history: 10,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    let mut watch = kv.watch_all().await.unwrap();
+
+    // create some data in second Store to see if `watch` will catch this data and panic.
+    skv.create("foo", b"loren").await.unwrap();
+
+    // test watch
     kv.create("foo", b"lorem").await.unwrap();
     let entry = watch.next().await.unwrap();
     assert_eq!(entry.key, "foo".to_string());
