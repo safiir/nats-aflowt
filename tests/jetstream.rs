@@ -11,6 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use nats_aflowt as nats;
 use std::{collections::HashSet, io, iter::FromIterator, time::Duration};
 
 mod util;

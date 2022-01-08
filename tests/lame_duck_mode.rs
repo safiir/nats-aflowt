@@ -14,6 +14,7 @@
 mod util;
 use nats::AsyncCall;
 use nats::BoxFuture;
+use nats_aflowt as nats;
 pub use util::*;
 
 #[derive(Clone)]

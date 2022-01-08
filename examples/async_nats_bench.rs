@@ -1,3 +1,4 @@
+use nats_aflowt as nats;
 use std::{
     num::NonZeroUsize,
     sync::{Arc, Barrier},

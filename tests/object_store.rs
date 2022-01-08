@@ -17,6 +17,7 @@ use rand::prelude::*;
 #[allow(unused_imports)]
 use tokio::io::AsyncReadExt;
 
+use nats_aflowt as nats;
 mod util;
 
 #[tokio::test]

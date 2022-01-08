@@ -1,4 +1,5 @@
 use nats::{AsyncCall, BoxFuture};
+use nats_aflowt as nats;
 use quicli::prelude::*;
 use structopt::{clap::ArgGroup, StructOpt};
 

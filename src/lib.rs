@@ -11,15 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! A Rust client for the NATS.io ecosystem.
+//! Unofficial port of NATS rust client to pure async.
 //!
-//! `git clone https://github.com/nats-io/nats.rs`
+//! Source: [https://github.com/stevelr/nats-aflowt]: https://github.com/stevelr/nats-aflowt
+//!
+//! A Rust client for the NATS.io ecosystem.
 //!
 //! NATS.io is a simple, secure and high performance open source messaging
 //! system for cloud native applications, `IoT` messaging, and microservices
 //! architectures.
-//!
-//! For async API refer to the [`async-nats`] crate.
 //!
 //! For more information see [https://nats.io/].
 //!
