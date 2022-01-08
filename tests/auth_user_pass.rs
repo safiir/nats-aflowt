@@ -12,6 +12,7 @@
 // limitations under the License.
 
 mod util;
+use nats_aflowt as nats;
 pub use util::*;
 
 #[tokio::test]

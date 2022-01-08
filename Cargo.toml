@@ -1,15 +1,16 @@
 [package]
-name = "nats"
-version = "0.16.100"
-description = "A Rust NATS client"
-authors = ["Derek Collison <derek@nats.io>", "Tyler Neely <tyler@nats.io>", "Stjepan Glavina <stjepan@nats.io>"]
+name = "nats-aflowt"
+version = "0.16.101"
+description = "Unofficial port of NATS rust client to pure async"
+authors = ["client by NATS team", "async port by stevelr"]
+#authors = ["Derek Collison <derek@nats.io>", "Tyler Neely <tyler@nats.io>", "Stjepan Glavina <stjepan@nats.io>"]
 edition = "2021"
 license = "Apache-2.0"
 documentation = "https://docs.rs/nats"
 homepage = "https://github.com/nats-io/nats.rs"
 repository = "https://github.com/nats-io/nats.rs"
 readme = "README.md"
-keywords = ["nats", "client", "messaging", "api"]
+keywords = ["nats", "client", "messaging", "api", "async"]
 categories = ["network-programming", "api-bindings"]
 
 [features]

@@ -1,3 +1,5 @@
+use nats_aflowt as nats;
+
 // example taken from doc for PushSubscription::drain
 //
 #[tokio::main]

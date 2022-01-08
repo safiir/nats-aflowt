@@ -1,5 +1,6 @@
 #![feature(async_closure)]
 
+use nats_aflowt as nats;
 use std::io;
 use std::time::Duration;
 

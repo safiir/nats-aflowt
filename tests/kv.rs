@@ -16,6 +16,7 @@ mod util;
 
 use futures::stream::StreamExt;
 use nats::jetstream::StreamConfig;
+use nats_aflowt as nats;
 
 use nats::kv::*;
 

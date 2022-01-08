@@ -2,6 +2,7 @@
 //
 use futures::stream::StreamExt;
 use nats::kv::Config;
+use nats_aflowt as nats;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
