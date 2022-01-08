@@ -1,4 +1,4 @@
-// Copyright 2020-2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -11,6 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::jetstream::AckKind;
+use chrono::{TimeZone, Utc};
 use std::{
     fmt, io,
     sync::{
@@ -54,19 +56,6 @@ pub struct Message {
     pub double_acked: Arc<AtomicBool>,
 }
 
-impl From<crate::asynk::Message> for Message {
-    fn from(asynk: crate::asynk::Message) -> Message {
-        Message {
-            subject: asynk.subject,
-            reply: asynk.reply,
-            data: asynk.data,
-            headers: asynk.headers,
-            client: asynk.client,
-            double_acked: asynk.double_acked,
-        }
-    }
-}
-
 impl Message {
     /// Creates new empty `Message`, without a Client.
     /// Useful for passing `Message` data or creating `Message` instance without caring about `Client`,
@@ -88,7 +77,7 @@ impl Message {
     }
 
     /// Respond to a request message.
-    pub fn respond(&self, msg: impl AsRef<[u8]>) -> io::Result<()> {
+    pub async fn respond(&self, msg: impl AsRef<[u8]>) -> io::Result<()> {
         let reply = self.reply.as_ref().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "No reply subject to reply to")
         })?;
@@ -96,7 +85,9 @@ impl Message {
             .client
             .as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, MESSAGE_NOT_BOUND))?;
-        client.publish(reply.as_str(), None, None, msg.as_ref())?;
+        client
+            .publish(reply.as_str(), None, None, msg.as_ref())
+            .await?;
         Ok(())
     }
 
@@ -173,11 +164,11 @@ impl Message {
     ///
     /// Returns immediately if this message has already been
     /// double-acked.
-    pub fn ack(&self) -> io::Result<()> {
+    pub async fn ack(&self) -> io::Result<()> {
         if self.double_acked.load(Ordering::Acquire) {
             return Ok(());
         }
-        self.respond(b"")
+        self.respond(b"").await
     }
 
     /// Acknowledge a `JetStream` message. See `AckKind` documentation for
@@ -185,8 +176,8 @@ impl Message {
     /// server acks your ack, use the `double_ack` method instead.
     ///
     /// Does not check whether this message has already been double-acked.
-    pub fn ack_kind(&self, ack_kind: crate::jetstream::AckKind) -> io::Result<()> {
-        self.respond(ack_kind)
+    pub async fn ack_kind(&self, ack_kind: AckKind) -> io::Result<()> {
+        self.respond(ack_kind).await
     }
 
     /// Acknowledge a `JetStream` message and wait for acknowledgement from the server
@@ -194,7 +185,7 @@ impl Message {
     /// See `AckKind` documentation for details of what each variant means.
     ///
     /// Returns immediately if this message has already been double-acked.
-    pub fn double_ack(&self, ack_kind: crate::jetstream::AckKind) -> io::Result<()> {
+    pub async fn double_ack(&self, ack_kind: AckKind) -> io::Result<()> {
         if self.double_acked.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -219,22 +210,25 @@ impl Message {
                 log::warn!("double_ack is retrying until the server connection is reestablished");
             }
             let ack_reply = format!("_INBOX.{}", nuid::next());
-            let sub_ret = client.subscribe(&ack_reply, None);
+            let sub_ret = client.subscribe(&ack_reply, None).await;
             if sub_ret.is_err() {
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 continue;
             }
             let (sid, receiver) = sub_ret?;
             let sub =
                 crate::Subscription::new(sid, ack_reply.to_string(), receiver, client.clone());
 
-            let pub_ret = client.publish(original_reply, Some(&ack_reply), None, ack_kind.as_ref());
+            let pub_ret = client
+                .publish(original_reply, Some(&ack_reply), None, ack_kind.as_ref())
+                .await;
             if pub_ret.is_err() {
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 continue;
             }
             if sub
                 .next_timeout(std::time::Duration::from_millis(100))
+                .await
                 .is_ok()
             {
                 self.double_acked.store(true, Ordering::Release);

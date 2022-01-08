@@ -1,4 +1,4 @@
-// Copyright 2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -14,13 +14,19 @@
 //! Support for Key Value Store.
 //! This feature is experimental and the API may change.
 
+use futures::StreamExt;
 use std::io;
+use std::pin::Pin;
 use std::time::Duration;
 
 use crate::header::{self, HeaderMap};
-use crate::jetstream::{Error, ErrorCode, JetStream, PushSubscription, SubscribeOptions};
-use crate::jetstream_types::*;
+use crate::jetstream::{
+    DateTime, Error, ErrorCode, JetStream, StorageType, StreamConfig, StreamInfo, StreamMessage,
+    SubscribeOptions,
+};
+
 use crate::message::Message;
+use crate::Stream;
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashSet;
@@ -112,23 +118,24 @@ impl JetStream {
     ///
     /// ```
     /// # use nats::kv::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// context.create_key_value(&Config {
     ///   bucket: "key_value".to_string(),
     ///   ..Default::default()
-    /// })?;
+    /// }).await?;
     ///
-    /// let key_value = context.key_value("key_value")?;
+    /// let key_value = context.key_value("key_value").await?;
     ///
-    /// # context.delete_key_value("key_value")?;
+    /// # context.delete_key_value("key_value").await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn key_value(&self, bucket: &str) -> io::Result<Store> {
-        if !self.connection.is_server_compatible_version(2, 6, 2) {
+    pub async fn key_value(&self, bucket: &str) -> io::Result<Store> {
+        if !self.connection.is_server_compatible_version(2, 6, 2).await {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 "key-value requires at least server version 2.6.2",
@@ -143,7 +150,7 @@ impl JetStream {
         }
 
         let stream_name = format!("KV_{}", bucket);
-        let stream_info = self.stream_info(&stream_name)?;
+        let stream_info = self.stream_info(&stream_name).await?;
 
         // Do some quick sanity checks that this is a correctly formed stream for KV.
         // Max msgs per subject should be > 0.
@@ -170,21 +177,22 @@ impl JetStream {
     ///
     /// ```
     /// # use nats::kv::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// let bucket = context.create_key_value(&Config {
     ///   bucket: "create_key_value".to_string(),
     ///   ..Default::default()
-    /// })?;
+    /// }).await?;
     ///
-    /// # context.delete_key_value("create_key_value")?;
+    /// # context.delete_key_value("create_key_value").await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn create_key_value(&self, config: &Config) -> io::Result<Store> {
-        if !self.connection.is_server_compatible_version(2, 6, 2) {
+    pub async fn create_key_value(&self, config: &Config) -> io::Result<Store> {
+        if !self.connection.is_server_compatible_version(2, 6, 2).await {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 "key-value requires at least server version 2.6.2",
@@ -195,7 +203,7 @@ impl JetStream {
             return Err(io::Error::new(io::ErrorKind::Other, "invalid bucket name"));
         }
 
-        self.account_info()?;
+        self.account_info().await?;
 
         // Default to 1 for history. Max is 64 for now.
         let history = if config.history > 0 {
@@ -217,20 +225,22 @@ impl JetStream {
             config.num_replicas
         };
 
-        let stream_info = self.add_stream(&StreamConfig {
-            name: format!("KV_{}", config.bucket),
-            description: Some(config.description.to_string()),
-            subjects: vec![format!("$KV.{}.>", config.bucket)],
-            max_msgs_per_subject: history,
-            max_bytes: config.max_bytes,
-            max_age: config.max_age,
-            max_msg_size: config.max_value_size,
-            storage: config.storage,
-            allow_rollup: true,
-            deny_delete: true,
-            num_replicas,
-            ..Default::default()
-        })?;
+        let stream_info = self
+            .add_stream(&StreamConfig {
+                name: format!("KV_{}", config.bucket),
+                description: Some(config.description.to_string()),
+                subjects: vec![format!("$KV.{}.>", config.bucket)],
+                max_msgs_per_subject: history,
+                max_bytes: config.max_bytes,
+                max_age: config.max_age,
+                max_msg_size: config.max_value_size,
+                storage: config.storage,
+                allow_rollup: true,
+                deny_delete: true,
+                num_replicas,
+                ..Default::default()
+            })
+            .await?;
 
         Ok(Store {
             name: config.bucket.to_string(),
@@ -246,23 +256,24 @@ impl JetStream {
     ///
     /// ```
     /// use nats::kv::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// # let bucket = context.create_key_value(&Config {
     /// #  bucket: "delete_key_value".to_string(),
     /// #  ..Default::default()
-    /// # })?;
+    /// # }).await?;
     ///
-    /// context.delete_key_value("delete_key_value")?;
+    /// context.delete_key_value("delete_key_value").await?;
     ///
     /// # Ok(())
     /// # }
     /// ```
     ///
-    pub fn delete_key_value(&self, bucket: &str) -> io::Result<()> {
-        if !self.connection.is_server_compatible_version(2, 6, 2) {
+    pub async fn delete_key_value(&self, bucket: &str) -> io::Result<()> {
+        if !self.connection.is_server_compatible_version(2, 6, 2).await {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 "key-value requires at least server version 2.6.2",
@@ -274,7 +285,7 @@ impl JetStream {
         }
 
         let stream_name = format!("KV_{}", bucket);
-        self.delete_stream(&stream_name)?;
+        self.delete_stream(&stream_name).await?;
 
         Ok(())
     }
@@ -310,8 +321,8 @@ pub struct Store {
 
 impl Store {
     /// Returns the status of the bucket
-    pub fn status(&self) -> io::Result<BucketStatus> {
-        let info = self.context.stream_info(&self.stream_name)?;
+    pub async fn status(&self) -> io::Result<BucketStatus> {
+        let info = self.context.stream_info(&self.stream_name).await?;
 
         Ok(BucketStatus {
             bucket: self.name.to_string(),
@@ -325,17 +336,18 @@ impl Store {
     ///
     /// ```
     /// # use nats::kv::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// # let bucket = context.create_key_value(&Config {
     /// #  bucket: "entry".to_string(),
     /// #  ..Default::default()
-    /// # })?;
+    /// # }).await?;
     /// #
-    /// bucket.put("foo", b"bar")?;
-    /// let maybe_entry = bucket.entry("foo")?;
+    /// bucket.put("foo", b"bar").await?;
+    /// let maybe_entry = bucket.entry("foo").await?;
     /// if let Some(entry) = maybe_entry {
     ///   println!("Found entry {:?}", entry);
     /// }
@@ -343,7 +355,7 @@ impl Store {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn entry(&self, key: &str) -> io::Result<Option<Entry>> {
+    pub async fn entry(&self, key: &str) -> io::Result<Option<Entry>> {
         if !is_valid_key(key) {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid key"));
         }
@@ -352,7 +364,11 @@ impl Store {
         subject.push_str(&self.prefix);
         subject.push_str(key);
 
-        match self.context.get_last_message(&self.stream_name, &subject) {
+        match self
+            .context
+            .get_last_message(&self.stream_name, &subject)
+            .await
+        {
             Ok(message) => {
                 let operation = kv_operation_from_stream_message(&message);
                 let entry = Entry {
@@ -387,17 +403,18 @@ impl Store {
     ///
     /// ```
     /// # use nats::kv::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// # let bucket = context.create_key_value(&Config {
     /// #  bucket: "get".to_string(),
     /// #  ..Default::default()
-    /// # })?;
+    /// # }).await?;
     /// #
-    /// bucket.put("foo", b"bar")?;
-    /// let maybe_value = bucket.get("foo")?;
+    /// bucket.put("foo", b"bar").await?;
+    /// let maybe_value = bucket.get("foo").await?;
     /// if let Some(value) = maybe_value {
     ///   println!("Found value {:?}", value);
     /// }
@@ -405,8 +422,8 @@ impl Store {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn get(&self, key: &str) -> io::Result<Option<Vec<u8>>> {
-        match self.entry(key) {
+    pub async fn get(&self, key: &str) -> io::Result<Option<Vec<u8>>> {
+        match self.entry(key).await {
             Ok(Some(entry)) => match entry.operation {
                 Operation::Put => Ok(Some(entry.value)),
                 _ => Ok(None),
@@ -422,21 +439,22 @@ impl Store {
     ///
     /// ```
     /// # use nats::kv::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// # let bucket = context.create_key_value(&Config {
     /// #  bucket: "get".to_string(),
     /// #  ..Default::default()
-    /// # })?;
+    /// # }).await?;
     /// #
-    /// bucket.put("foo", b"bar")?;
+    /// bucket.put("foo", b"bar").await?;
     /// #
     /// # Ok(())
     /// # }
     /// ```
-    pub fn put(&self, key: &str, value: impl AsRef<[u8]>) -> io::Result<u64> {
+    pub async fn put(&self, key: &str, value: impl AsRef<[u8]>) -> io::Result<u64> {
         if !is_valid_key(key) {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid key"));
         }
@@ -445,7 +463,7 @@ impl Store {
         subject.push_str(&self.prefix);
         subject.push_str(key);
 
-        let publish_ack = self.context.publish(&subject, value)?;
+        let publish_ack = self.context.publish(&subject, value).await?;
 
         Ok(publish_ack.sequence)
     }
@@ -456,31 +474,32 @@ impl Store {
     ///
     /// ```
     /// # use nats::kv::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// # let bucket = context.create_key_value(&Config {
     /// #  bucket: "create".to_string(),
     /// #  ..Default::default()
-    /// # })?;
+    /// # }).await?;
     /// #
-    /// bucket.purge("foo")?;
-    /// bucket.create("foo", b"bar")?;
+    /// bucket.purge("foo").await?;
+    /// bucket.create("foo", b"bar").await?;
     /// #
     /// # Ok(())
     /// # }
     /// ```
-    pub fn create(&self, key: &str, value: impl AsRef<[u8]>) -> io::Result<u64> {
-        let result = self.update(key, &value, 0);
+    pub async fn create(&self, key: &str, value: impl AsRef<[u8]>) -> io::Result<u64> {
+        let result = self.update(key, &value, 0).await;
         if result.is_ok() {
             return result;
         }
 
         // Check if the last entry is a delete marker
-        if let Ok(Some(entry)) = self.entry(key) {
+        if let Ok(Some(entry)) = self.entry(key).await {
             if entry.operation != Operation::Put {
-                return self.update(key, &value, entry.revision);
+                return self.update(key, &value, entry.revision).await;
             }
         }
 
@@ -493,22 +512,28 @@ impl Store {
     ///
     /// ```
     /// # use nats::kv::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// # let bucket = context.create_key_value(&Config {
     /// #  bucket: "update".to_string(),
     /// #  ..Default::default()
-    /// # })?;
+    /// # }).await?;
     /// #
-    /// let revision = bucket.put("foo", b"bar")?;
-    /// let new_revision = bucket.update("foo", b"baz", revision)?;
+    /// let revision = bucket.put("foo", b"bar").await?;
+    /// let new_revision = bucket.update("foo", b"baz", revision).await?;
     /// #
     /// # Ok(())
     /// # }
     /// ```
-    pub fn update(&self, key: &str, value: impl AsRef<[u8]>, revision: u64) -> io::Result<u64> {
+    pub async fn update(
+        &self,
+        key: &str,
+        value: impl AsRef<[u8]>,
+        revision: u64,
+    ) -> io::Result<u64> {
         if !is_valid_key(key) {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid key"));
         }
@@ -526,7 +551,7 @@ impl Store {
         entry.insert(revision.to_string());
 
         let message = Message::new(&subject, None, value, Some(headers));
-        let publish_ack = self.context.publish_message(&message)?;
+        let publish_ack = self.context.publish_message(&message).await?;
 
         Ok(publish_ack.sequence)
     }
@@ -537,22 +562,23 @@ impl Store {
     ///
     /// ```
     /// # use nats::kv::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// # let bucket = context.create_key_value(&Config {
     /// #  bucket: "delete".to_string(),
     /// #  ..Default::default()
-    /// # })?;
+    /// # }).await?;
     /// #
-    /// bucket.create("foo", b"bar")?;
-    /// bucket.delete("foo")?;
+    /// bucket.create("foo", b"bar").await?;
+    /// bucket.delete("foo").await?;
     /// #
     /// # Ok(())
     /// # }
     /// ```
-    pub fn delete(&self, key: &str) -> io::Result<()> {
+    pub async fn delete(&self, key: &str) -> io::Result<()> {
         if !is_valid_key(key) {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid key"));
         }
@@ -570,7 +596,7 @@ impl Store {
         entry.insert(KV_OPERATION_DELETE.to_string());
 
         let message = Message::new(&subject, None, b"", Some(headers));
-        self.context.publish_message(&message)?;
+        self.context.publish_message(&message).await?;
 
         Ok(())
     }
@@ -581,22 +607,23 @@ impl Store {
     ///
     /// ```
     /// # use nats::kv::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// # let bucket = context.create_key_value(&Config {
     /// #  bucket: "purge".to_string(),
     /// #  ..Default::default()
-    /// # })?;
+    /// # }).await?;
     /// #
-    /// bucket.create("foo", b"bar")?;
-    /// bucket.purge("foo")?;
+    /// bucket.create("foo", b"bar").await?;
+    /// bucket.purge("foo").await?;
     /// #
     /// # Ok(())
     /// # }
     /// ```
-    pub fn purge(&self, key: &str) -> io::Result<()> {
+    pub async fn purge(&self, key: &str) -> io::Result<()> {
         if !is_valid_key(key) {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid key"));
         }
@@ -621,128 +648,150 @@ impl Store {
         rollup_entry.insert(ROLLUP_SUBJECT.to_string());
 
         let message = Message::new(&subject, None, b"", Some(headers));
-        self.context.publish_message(&message)?;
+        self.context.publish_message(&message).await?;
 
         Ok(())
     }
 
-    /// Returns an iterator which iterate over all the current keys.
+    /// Returns a stream which iterate over all the current keys.
     ///
     /// # Examples
     ///
     /// ```
     /// # use nats::kv::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// use futures::stream::StreamExt;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// # let bucket = context.create_key_value(&Config {
     /// #  bucket: "keys".to_string(),
     /// #  ..Default::default()
-    /// # })?;
+    /// # }).await?;
     /// #
-    /// bucket.put("foo", b"fizz")?;
-    /// bucket.put("bar", b"buzz")?;
+    /// bucket.put("foo", b"fizz").await?;
+    /// bucket.put("bar", b"buzz").await?;
     ///
-    /// let mut keys = bucket.keys()?;
-    ///
-    /// assert_eq!(keys.next(), Some("foo".to_string()));
-    /// assert_eq!(keys.next(), Some("bar".to_string()));
-    /// #
+    /// let keys = bucket.keys().await.unwrap().collect::<Vec<String>>().await;
+    /// assert!(keys.contains(&"foo".to_string()));
+    /// assert!(keys.contains(&"bar".to_string()));
     /// # Ok(())
     /// # }
     /// ```
-    pub fn keys(&self) -> io::Result<Keys> {
+    pub async fn keys(&self) -> io::Result<Pin<Box<dyn Stream<Item = String>>>> {
         let mut subject = String::new();
         subject.push_str(&self.prefix);
         subject.push_str(ALL_KEYS);
 
-        let subscription = self.context.subscribe_with_options(
-            &subject,
-            &SubscribeOptions::ordered()
-                .headers_only()
-                .deliver_last_per_subject(),
-        )?;
+        let subscription = self
+            .context
+            .subscribe_with_options(
+                &subject,
+                &SubscribeOptions::ordered()
+                    .headers_only()
+                    .deliver_last_per_subject(),
+            )
+            .await?;
 
         Ok(Keys {
             prefix: self.prefix.clone(),
-            subscription,
+            subscription: Box::pin(subscription.stream()),
             done: false,
-        })
+        }
+        .stream())
     }
 
-    /// Returns an iterator which iterates over each entry in historical order.
+    /// Returns a stream which iterates over each entry in historical order.
     ///
     /// # Examples
     ///
     /// ```
     /// # use nats::kv::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// use futures::stream::StreamExt;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// let bucket = context.create_key_value(&Config {
     ///   bucket: "history_iter".to_string(),
     ///   history: 2,
     ///   ..Default::default()
-    /// })?;
+    /// }).await?;
     ///
-    /// bucket.put("foo", b"fizz")?;
-    /// bucket.put("foo", b"buzz")?;
+    /// bucket.put("foo", b"fizz").await?;
+    /// bucket.put("foo", b"buzz").await?;
     ///
-    /// let mut history = bucket.history("foo")?;
+    /// let mut history = bucket.history("foo").await?;
     ///
-    /// let next = history.next().unwrap();
+    /// let next = history.next().await.unwrap();
     /// assert_eq!(next.key, "foo".to_string());
     /// assert_eq!(next.value, b"fizz");
     ///
-    /// let next = history.next().unwrap();
+    /// let next = history.next().await.unwrap();
     /// assert_eq!(next.key, "foo".to_string());
     /// assert_eq!(next.value, b"buzz");
     ///
-    /// # context.delete_key_value("history_iter")?;
+    /// # context.delete_key_value("history_iter").await?;
     /// #
     /// # Ok(())
     /// # }
     /// ```
-    pub fn history(&self, key: &str) -> io::Result<History> {
+    pub async fn history(&self, key: &str) -> io::Result<Pin<Box<dyn Stream<Item = Entry>>>> {
         let mut subject = String::new();
         subject.push_str(&self.prefix);
         subject.push_str(key);
 
-        let subscription = self.context.subscribe_with_options(
-            &subject,
-            &SubscribeOptions::ordered()
-                .deliver_all()
-                .enable_flow_control()
-                .idle_heartbeat(Duration::from_millis(5000)),
-        )?;
+        let subscription = self
+            .context
+            .subscribe_with_options(
+                &subject,
+                &SubscribeOptions::ordered()
+                    .deliver_all()
+                    .enable_flow_control()
+                    .idle_heartbeat(Duration::from_millis(5000)),
+            )
+            .await?;
 
         Ok(History {
             bucket: self.name.clone(),
             prefix: self.prefix.clone(),
-            subscription,
+            subscription: Box::pin(subscription.stream()),
             done: false,
-        })
+        }
+        .stream())
     }
 
-    /// Returns an iterator which iterates over each entry as they happen.
-    pub fn watch(&self) -> io::Result<Watch> {
-        let subject = ">";
+    /// Returns a stream which iterates over each entry as they happen.
+    pub async fn watch_all(&self) -> io::Result<Pin<Box<dyn Stream<Item = Entry>>>> {
+        self.watch(">").await
+    }
 
-        let subscription = self.context.subscribe_with_options(
-            subject,
-            &SubscribeOptions::ordered()
-                .deliver_last_per_subject()
-                .enable_flow_control()
-                .idle_heartbeat(Duration::from_millis(5000)),
-        )?;
+    /// Returns a stream which iterates over each entry as they happen.
+    pub async fn watch<T: AsRef<str>>(
+        &self,
+        key: T,
+    ) -> io::Result<Pin<Box<dyn Stream<Item = Entry>>>> {
+        let subject = format!("{}{}", self.prefix, key.as_ref());
+
+        let subscription = self
+            .context
+            .subscribe_with_options(
+                subject.as_str(),
+                &SubscribeOptions::ordered()
+                    .deliver_last_per_subject()
+                    .enable_flow_control()
+                    .idle_heartbeat(Duration::from_millis(5000)),
+            )
+            .await?;
 
         Ok(Watch {
             bucket: self.name.clone(),
             prefix: self.prefix.clone(),
-            subscription,
-        })
+            subscription: Box::pin(subscription.stream()),
+        }
+        .stream())
     }
 
     /// Returns the name of the bucket
@@ -754,43 +803,48 @@ impl Store {
 /// An iterator used to iterate through the keys of a bucket.
 pub struct Keys {
     prefix: String,
-    subscription: PushSubscription,
+    subscription: Pin<Box<dyn Stream<Item = Message>>>,
     done: bool,
 }
 
-impl Iterator for Keys {
-    type Item = String;
+impl Keys {
+    /// Returns stream of keys
+    pub fn stream(self) -> Pin<Box<dyn Stream<Item = String>>> {
+        Box::pin(self.into_stream())
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
-            return None;
-        }
-
-        match self.subscription.next() {
-            Some(message) => {
-                // println!("{:?}", &message);
-                // If there are no more pending messages we'll stop after delivering the key
-                // derived from this message.
-                if let Some(info) = message.jetstream_message_info() {
-                    // println!("{:?}", &info);
-                    if info.pending == 0 {
-                        self.done = true;
+    // convert into unpinned stream
+    #[doc(hidden)]
+    fn into_stream(mut self) -> impl Stream<Item = String> {
+        async_stream::stream! {
+            if !self.done {
+                while let Some(message) = self.subscription.next().await {
+                    // If there are no more pending messages we'll stop after delivering the key
+                    // derived from this message.
+                    if let Some(info) = message.jetstream_message_info() {
+                        if info.pending == 0 {
+                            self.done = true;
+                        }
                     }
-                }
 
-                // We are only interested in unique current keys from subjects so we skip delete
-                // and purge markers.
-                let operation = kv_operation_from_maybe_headers(message.headers.as_ref());
-                if operation != Operation::Put {
-                    return self.next();
-                }
+                    // We are only interested in unique current keys from subjects so we skip delete
+                    // and purge markers.
+                    let operation = kv_operation_from_maybe_headers(message.headers.as_ref());
+                    if operation != Operation::Put {
+                        continue;
+                    }
 
-                message
-                    .subject
-                    .strip_prefix(&self.prefix)
-                    .map(|s| s.to_string())
+                    if let Some(m) = message
+                        .subject
+                        .strip_prefix(&self.prefix)
+                        .map(|s| s.to_string()) {
+                        yield m;
+                    } else {
+                        break;
+                    }
+                    if self.done { break; }
+                }
             }
-            None => None,
         }
     }
 }
@@ -799,48 +853,51 @@ impl Iterator for Keys {
 pub struct History {
     bucket: String,
     prefix: String,
-    subscription: PushSubscription,
+    subscription: Pin<Box<dyn Stream<Item = Message>>>,
     done: bool,
 }
 
-impl Iterator for History {
-    type Item = Entry;
+impl History {
+    /// Converts to stream of history entries
+    pub fn stream(self) -> Pin<Box<dyn Stream<Item = Entry>>> {
+        Box::pin(self.into_stream())
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
-            return None;
-        }
+    // convert into unpinned stream
+    #[doc(hidden)]
+    fn into_stream(mut self) -> impl Stream<Item = Entry> {
+        async_stream::stream! {
+            if !self.done {
+                while let Some(message) = self.subscription.next().await {
+                    if let Some(info) = message.jetstream_message_info() {
+                        if info.pending == 0 {
+                            self.done = true;
+                        }
+                        let operation = kv_operation_from_maybe_headers(message.headers.as_ref());
 
-        match self.subscription.next() {
-            Some(message) => {
-                if let Some(info) = message.jetstream_message_info() {
-                    if info.pending == 0 {
-                        self.done = true;
+                        let key = message
+                            .subject
+                            .strip_prefix(&self.prefix)
+                            .map(|s| s.to_string())
+                            .unwrap();
+
+                        yield Entry {
+                            bucket: self.bucket.clone(),
+                            key,
+                            value: message.data.clone(),
+                            revision: info.stream_seq,
+                            created: info.published,
+                            delta: info.pending,
+                            operation,
+                        };
+                    } else {
+                        break;
                     }
-
-                    let operation = kv_operation_from_maybe_headers(message.headers.as_ref());
-
-                    let key = message
-                        .subject
-                        .strip_prefix(&self.prefix)
-                        .map(|s| s.to_string())
-                        .unwrap();
-
-                    Some(Entry {
-                        bucket: self.bucket.clone(),
-                        key,
-                        value: message.data.clone(),
-                        revision: info.stream_seq,
-                        created: info.published,
-                        delta: info.pending,
-                        operation,
-                    })
-                } else {
-                    None
+                    if self.done {
+                        break;
+                    }
                 }
             }
-
-            None => None,
         }
     }
 }
@@ -849,38 +906,42 @@ impl Iterator for History {
 pub struct Watch {
     bucket: String,
     prefix: String,
-    subscription: PushSubscription,
+    subscription: Pin<Box<dyn Stream<Item = Message>>>,
 }
 
-impl Iterator for Watch {
-    type Item = Entry;
+impl Watch {
+    /// Convert to stream of entries
+    pub fn stream(self) -> Pin<Box<dyn Stream<Item = Entry>>> {
+        Box::pin(self.into_stream())
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.subscription.next() {
-            Some(message) => {
-                if let Some(info) = message.jetstream_message_info() {
-                    let operation = kv_operation_from_maybe_headers(message.headers.as_ref());
+    // convert into unpinned stream
+    #[doc(hidden)]
+    fn into_stream(mut self) -> impl Stream<Item = Entry> {
+        async_stream::stream! {
+                while let Some(message) = self.subscription.next().await {
+                    if let Some(info) = message.jetstream_message_info() {
+                        let operation = kv_operation_from_maybe_headers(message.headers.as_ref());
 
-                    let key = message
-                        .subject
-                        .strip_prefix(&self.prefix)
-                        .map(|s| s.to_string())
-                        .unwrap();
+                        let key = message
+                            .subject
+                            .strip_prefix(&self.prefix)
+                            .map(|s| s.to_string())
+                            .unwrap();
 
-                    Some(Entry {
-                        bucket: self.bucket.clone(),
-                        key,
-                        value: message.data.clone(),
-                        revision: info.stream_seq,
-                        created: info.published,
-                        delta: info.pending,
-                        operation,
-                    })
-                } else {
-                    None
-                }
+                        yield Entry {
+                            bucket: self.bucket.clone(),
+                            key,
+                            value: message.data.clone(),
+                            revision: info.stream_seq,
+                            created: info.published,
+                            delta: info.pending,
+                            operation,
+                        };
+                    } else {
+                        break;
+                    }
             }
-            None => None,
         }
     }
 }

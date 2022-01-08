@@ -1,4 +1,4 @@
-// Copyright 2020-2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -71,19 +71,25 @@ impl FromIterator<(String, String)> for HeaderMap {
     }
 }
 
-impl<'a> FromIterator<(&'a String, &'a String)> for HeaderMap {
-    fn from_iter<T>(iter: T) -> Self
-    where
-        T: IntoIterator<Item = (&'a String, &'a String)>,
-    {
+macro_rules! build_map {
+    ( $iter:ident ) => {{
         let mut inner = HashMap::default();
-        for (k, v) in iter {
+        for (k, v) in $iter {
             let k = k.to_string();
             let v = v.to_string();
             let entry = inner.entry(k).or_insert_with(HashSet::default);
             entry.insert(v);
         }
         HeaderMap { inner }
+    }};
+}
+
+impl<'a> FromIterator<(&'a String, &'a String)> for HeaderMap {
+    fn from_iter<T>(iter: T) -> Self
+    where
+        T: IntoIterator<Item = (&'a String, &'a String)>,
+    {
+        build_map!(iter)
     }
 }
 
@@ -92,14 +98,7 @@ impl<'a> FromIterator<&'a (&'a String, &'a String)> for HeaderMap {
     where
         T: IntoIterator<Item = &'a (&'a String, &'a String)>,
     {
-        let mut inner = HashMap::default();
-        for (k, v) in iter {
-            let k = k.to_string();
-            let v = v.to_string();
-            let entry = inner.entry(k).or_insert_with(HashSet::default);
-            entry.insert(v);
-        }
-        HeaderMap { inner }
+        build_map!(iter)
     }
 }
 
@@ -108,14 +107,7 @@ impl<'a> FromIterator<(&'a str, &'a str)> for HeaderMap {
     where
         T: IntoIterator<Item = (&'a str, &'a str)>,
     {
-        let mut inner = HashMap::default();
-        for (k, v) in iter {
-            let k = k.to_string();
-            let v = v.to_string();
-            let entry = inner.entry(k).or_insert_with(HashSet::default);
-            entry.insert(v);
-        }
-        HeaderMap { inner }
+        build_map!(iter)
     }
 }
 
@@ -124,14 +116,7 @@ impl<'a> FromIterator<&'a (&'a str, &'a str)> for HeaderMap {
     where
         T: IntoIterator<Item = &'a (&'a str, &'a str)>,
     {
-        let mut inner = HashMap::default();
-        for (k, v) in iter {
-            let k = k.to_string();
-            let v = v.to_string();
-            let entry = inner.entry(k).or_insert_with(HashSet::default);
-            entry.insert(v);
-        }
-        HeaderMap { inner }
+        build_map!(iter)
     }
 }
 

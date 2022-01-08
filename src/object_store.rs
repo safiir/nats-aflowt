@@ -1,4 +1,4 @@
-// Copyright 2020-2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -14,19 +14,29 @@
 //! Support for Object Store.
 //! This feature is experimental and the API may change.
 
-use crate::header::HeaderMap;
-use crate::jetstream::JetStream;
-use crate::jetstream_push_subscription::PushSubscription;
-use crate::jetstream_types::*;
-use crate::Message;
+use crate::{
+    header::HeaderMap,
+    jetstream::{DateTime, DiscardPolicy, JetStream, StorageType, StreamConfig, SubscribeOptions},
+    Message, Stream,
+};
+
 use chrono::Utc;
+use futures::{Future, StreamExt};
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::cmp;
-use std::collections::HashSet;
-use std::io;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    cmp,
+    collections::HashSet,
+    io,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
+};
+use tokio::io::ReadBuf;
+use tokio::sync::Mutex;
 
 const DEFAULT_CHUNK_SIZE: usize = 128 * 1024;
 const NATS_ROLLUP: &str = "Nats-Rollup";
@@ -50,7 +60,41 @@ fn is_valid_object_name(object_name: &str) -> bool {
 }
 
 fn sanitize_object_name(object_name: &str) -> String {
-    object_name.replace(".", "_").replace(" ", "_")
+    object_name.replace('.', "_").replace(' ', "_")
+}
+
+#[test]
+fn test_valid_bucket_name() {
+    assert!(is_valid_bucket_name("000"));
+    assert!(is_valid_bucket_name("abc-def"));
+    assert!(is_valid_bucket_name("_name"));
+
+    // bad names
+    assert!(!is_valid_bucket_name(""));
+    assert!(!is_valid_bucket_name(".99"));
+    assert!(!is_valid_bucket_name("99."));
+    assert!(!is_valid_bucket_name("*"));
+    assert!(!is_valid_bucket_name("Δ22"));
+}
+
+#[test]
+fn test_valid_object_name() {
+    assert!(is_valid_object_name("000"));
+    assert!(is_valid_object_name("a=.bc"));
+
+    // bad names
+    assert!(!is_valid_object_name(""));
+    assert!(!is_valid_object_name(".99"));
+    assert!(!is_valid_object_name("99."));
+    assert!(!is_valid_object_name("*"));
+    assert!(!is_valid_object_name("Δ22"));
+}
+
+#[test]
+fn test_sanitize_object_name() {
+    assert_eq!(sanitize_object_name("abc").as_str(), "abc");
+    assert_eq!(sanitize_object_name("a.b.c d").as_str(), "a_b_c_d");
+    assert_eq!(sanitize_object_name("a b c.d").as_str(), "a_b_c_d");
 }
 
 /// Configuration values for object store buckets.
@@ -75,21 +119,22 @@ impl JetStream {
     ///
     /// ```
     /// # use nats::object_store::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// let bucket = context.create_object_store(&Config {
     ///   bucket: "create_object_store".to_string(),
     ///   ..Default::default()
-    /// })?;
+    /// }).await?;
     ///
-    /// # context.delete_object_store("create_object_store")?;
+    /// # context.delete_object_store("create_object_store").await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn create_object_store(&self, config: &Config) -> io::Result<ObjectStore> {
-        if !self.connection.is_server_compatible_version(2, 6, 2) {
+    pub async fn create_object_store(&self, config: &Config) -> io::Result<ObjectStore> {
+        if !self.connection.is_server_compatible_version(2, 6, 2).await {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 "object-store requires at least server version 2.6.2",
@@ -118,7 +163,8 @@ impl JetStream {
             discard: DiscardPolicy::New,
             allow_rollup: true,
             ..Default::default()
-        })?;
+        })
+        .await?;
 
         Ok(ObjectStore::new(bucket_name, self.clone()))
     }
@@ -129,23 +175,24 @@ impl JetStream {
     ///
     /// ```
     /// # use nats::object_store::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// context.create_object_store(&Config {
     ///   bucket: "object_store".to_string(),
     ///   ..Default::default()
-    /// })?;
+    /// }).await?;
     ///
-    /// let bucket = context.object_store("object_store")?;
+    /// let bucket = context.object_store("object_store").await?;
     ///
-    /// # context.delete_object_store("object_store")?;
+    /// # context.delete_object_store("object_store").await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn object_store(&self, bucket_name: &str) -> io::Result<ObjectStore> {
-        if !self.connection.is_server_compatible_version(2, 6, 2) {
+    pub async fn object_store(&self, bucket_name: &str) -> io::Result<ObjectStore> {
+        if !self.connection.is_server_compatible_version(2, 6, 2).await {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 "object-store requires at least server version 2.6.2",
@@ -160,7 +207,7 @@ impl JetStream {
         }
 
         let stream_name = format!("OBJ_{}", bucket_name);
-        self.stream_info(stream_name)?;
+        self.stream_info(stream_name).await?;
 
         Ok(ObjectStore::new(bucket_name.to_string(), self.clone()))
     }
@@ -171,24 +218,25 @@ impl JetStream {
     ///
     /// ```
     /// use nats::object_store::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// # let bucket = context.create_object_store(&Config {
     /// #  bucket: "delete_object_store".to_string(),
     /// #  ..Default::default()
-    /// # })?;
+    /// # }).await?;
     ///
-    /// context.delete_object_store("delete_object_store")?;
+    /// context.delete_object_store("delete_object_store").await?;
     ///
     /// # Ok(())
     /// # }
     /// ```
     ///
-    pub fn delete_object_store(&self, bucket_name: &str) -> io::Result<()> {
+    pub async fn delete_object_store(&self, bucket_name: &str) -> io::Result<()> {
         let stream_name = format!("OBJ_{}", bucket_name);
-        self.delete_stream(stream_name)?;
+        self.delete_stream(stream_name).await?;
 
         Ok(())
     }
@@ -254,21 +302,29 @@ pub struct ObjectStore {
     context: JetStream,
 }
 
+#[derive(Clone, Debug, Default)]
+struct ObjectBytes {
+    remaining_bytes: Vec<u8>,
+}
+
 /// Represents an object stored in a bucket.
 pub struct Object {
     info: ObjectInfo,
-    subscription: PushSubscription,
-    remaining_bytes: Vec<u8>,
-    skip_next: bool,
+    subscription: Pin<Box<dyn Stream<Item = Message>>>,
+    bytes: Arc<Mutex<ObjectBytes>>,
+    has_pending_messages: Arc<AtomicBool>,
 }
 
 impl Object {
-    pub(crate) fn new(subscription: PushSubscription, info: ObjectInfo) -> Self {
+    pub(crate) fn new(
+        subscription: Pin<Box<dyn Stream<Item = Message>>>,
+        info: ObjectInfo,
+    ) -> Self {
         Object {
             subscription,
             info,
-            remaining_bytes: Vec::new(),
-            skip_next: false,
+            bytes: Arc::new(Mutex::new(ObjectBytes::default())),
+            has_pending_messages: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -278,42 +334,65 @@ impl Object {
     }
 }
 
-impl io::Read for Object {
-    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        if !self.remaining_bytes.is_empty() {
-            let len = cmp::min(buffer.len(), self.remaining_bytes.len());
-            buffer.copy_from_slice(&self.remaining_bytes[..len]);
-
-            if self.remaining_bytes.len() > len {
-                self.remaining_bytes = self.remaining_bytes[len..].to_vec();
+impl tokio::io::AsyncRead for Object {
+    /// Read the data chunks for a given Object from attached subscription and copy it to provided
+    /// buffer
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        {
+            let mut bytes = match self.bytes.try_lock() {
+                Err(_) => return Poll::Pending,
+                Ok(guard) => guard,
+            };
+            if !bytes.remaining_bytes.is_empty() {
+                let len = cmp::min(buffer.remaining(), bytes.remaining_bytes.len());
+                buffer.put_slice(&bytes.remaining_bytes[..len]);
+                bytes.remaining_bytes = bytes.remaining_bytes[len..].to_vec();
+                return Poll::Ready(Ok(()));
             }
-
-            return Ok(len);
         }
+        if self.has_pending_messages.load(Ordering::Relaxed) {
+            let mut sub_fut = self.subscription.next();
 
-        if self.skip_next {
-            self.skip_next = false;
-
-            let maybe_message = self.subscription.try_next();
-            if let Some(message) = maybe_message {
-                let len = cmp::min(buffer.len(), message.data.len());
-                buffer.copy_from_slice(&message.data[..len]);
-
-                if message.data.len() > len {
-                    self.remaining_bytes.extend_from_slice(&message.data[len..]);
-                }
-
-                if let Some(message_info) = message.jetstream_message_info() {
-                    if message_info.pending == 0 {
-                        self.skip_next = true;
+            match Future::poll(Pin::new(&mut sub_fut), cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(Some(message)) => {
+                    let mut bytes = match self.bytes.try_lock() {
+                        Err(_) => return Poll::Pending,
+                        Ok(guard) => guard,
+                    };
+                    assert_ne!(message.data.len(), 0, "expect non-zero message size");
+                    let len = cmp::min(buffer.remaining(), message.data.len());
+                    /*
+                    // TODO(ss): if we received a message of 0 bytes (can this happen?),
+                    // we should return Poll::Pending. Otherwise, returning Poll::Ready
+                    // with no bytes written will be interpreted as end of stream
+                    if len == 0 {
+                        return Poll::Pending;
                     }
+                    */
+                    buffer.put_slice(&message.data[..len]);
+                    if message.data.len() > len {
+                        bytes
+                            .remaining_bytes
+                            .extend_from_slice(&message.data[len..]);
+                    }
+
+                    if let Some(message_info) = message.jetstream_message_info() {
+                        if message_info.pending == 0 {
+                            self.has_pending_messages.store(false, Ordering::Relaxed);
+                        }
+                    }
+                    Poll::Ready(Ok(()))
                 }
-
-                return Ok(len);
+                Poll::Ready(None) => Poll::Ready(Ok(())),
             }
+        } else {
+            Poll::Ready(Ok(()))
         }
-
-        Ok(0)
     }
 }
 
@@ -329,25 +408,26 @@ impl ObjectStore {
     ///
     /// ```
     /// # use nats::object_store::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// let bucket = context.create_object_store(&Config {
     ///   bucket: "info".to_string(),
     ///   ..Default::default()
-    /// })?;
+    /// }).await?;
     ///
     /// let bytes = vec![0];
-    /// let info = bucket.put("foo", &mut bytes.as_slice())?;
+    /// let info = bucket.put("foo", &mut bytes.as_slice()).await?;
     /// assert_eq!(info.name, "foo");
     /// assert_eq!(info.size, bytes.len());
     ///
-    /// # context.delete_object_store("info")?;
+    /// # context.delete_object_store("info").await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn info(&self, object_name: &str) -> io::Result<ObjectInfo> {
+    pub async fn info(&self, object_name: &str) -> io::Result<ObjectInfo> {
         // LoOkup the stream to get the bound subject.
         let object_name = sanitize_object_name(object_name);
         if !is_valid_object_name(&object_name) {
@@ -361,7 +441,10 @@ impl ObjectStore {
         let stream_name = format!("OBJ_{}", &self.name);
         let subject = format!("$O.{}.M.{}", &self.name, &object_name);
 
-        let message = self.context.get_last_message(&stream_name, &subject)?;
+        let message = self
+            .context
+            .get_last_message(&stream_name, &subject)
+            .await?;
         let object_info = serde_json::from_slice::<ObjectInfo>(&message.data)?;
 
         Ok(object_info)
@@ -369,42 +452,49 @@ impl ObjectStore {
 
     /// Seals the object store from further modifications.
     ///
-    pub fn seal(&self) -> io::Result<()> {
+    pub async fn seal(&self) -> io::Result<()> {
         let stream_name = format!("OBJ_{}", self.name);
-        let stream_info = self.context.stream_info(stream_name)?;
+        let stream_info = self.context.stream_info(stream_name).await?;
 
         let mut stream_config = stream_info.config;
         stream_config.sealed = true;
 
-        self.context.update_stream(&stream_config)?;
+        self.context.update_stream(&stream_config).await?;
 
         Ok(())
     }
 
     /// Put will place the contents from the given reader into this object-store.
+    /// Note that the reader uses blocking reads so this call should not be used with blocking io
     ///
     /// # Example
     ///
     /// ```
     /// # use nats::object_store::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # use tokio::io::AsyncReadExt as _;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// let bucket = context.create_object_store(&Config {
     ///   bucket: "put".to_string(),
     ///   ..Default::default()
-    /// })?;
+    /// }).await?;
     ///
     /// let bytes = vec![0, 1, 2, 3, 4];
-    /// let info = bucket.put("foo", &mut bytes.as_slice())?;
-    /// assert_eq!(bucket.info("foo").unwrap(), info);
+    /// let info = bucket.put("foo", &mut bytes.as_slice()).await?;
+    /// assert_eq!(bucket.info("foo").await.unwrap(), info);
+    /// # // read back to verify
+    /// # let mut result = Vec::new();
+    /// # bucket.get("foo").await.unwrap().read_to_end(&mut result).await?;
+    /// # assert_eq!(&bytes, &result);
     ///
-    /// # context.delete_object_store("put")?;
+    /// # context.delete_object_store("put").await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn put<T>(&self, meta: T, data: &mut impl io::Read) -> io::Result<ObjectInfo>
+    pub async fn put<T>(&self, meta: T, data: &mut impl io::Read) -> io::Result<ObjectInfo>
     where
         ObjectMeta: From<T>,
     {
@@ -417,8 +507,8 @@ impl ObjectStore {
             ));
         }
 
-        // Fetch any existing object info, if ther is any for later use.
-        let maybe_existing_object_info = match self.info(&object_name) {
+        // Fetch any existing object info, if there is any for later use.
+        let maybe_existing_object_info = match self.info(&object_name).await {
             Ok(object_info) => Some(object_info),
             Err(_) => None,
         };
@@ -440,7 +530,7 @@ impl ObjectStore {
             object_size += n;
             object_chunks += 1;
 
-            self.context.publish(&chunk_subject, &buffer[..n])?;
+            self.context.publish(&chunk_subject, &buffer[..n]).await?;
         }
 
         // Create a random subject prefixed with the object stream name.
@@ -470,7 +560,7 @@ impl ObjectStore {
         let message = Message::new(&subject, None, data, Some(headers));
 
         // Publish metadata
-        self.context.publish_message(&message)?;
+        self.context.publish_message(&message).await?;
 
         // Purge any old chunks.
         if let Some(existing_object_info) = maybe_existing_object_info {
@@ -478,7 +568,8 @@ impl ObjectStore {
             let chunk_subject = format!("$O.{}.C.{}", &self.name, &existing_object_info.nuid);
 
             self.context
-                .purge_stream_subject(&stream_name, &chunk_subject)?;
+                .purge_stream_subject(&stream_name, &chunk_subject)
+                .await?;
         }
 
         Ok(object_info)
@@ -489,39 +580,48 @@ impl ObjectStore {
     /// # Example
     ///
     /// ```
-    /// use std::io::Read;
+    /// use std::io::Read as _;
+    /// use tokio::io::AsyncReadExt as _;
     /// # use nats::object_store::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// let bucket = context.create_object_store(&Config {
     ///   bucket: "get".to_string(),
     ///   ..Default::default()
-    /// })?;
+    /// }).await?;
     ///
     /// let bytes = vec![0, 1, 2, 3, 4];
-    /// let info = bucket.put("foo", &mut bytes.as_slice())?;
+    /// let info = bucket.put("foo", &mut bytes.as_slice()).await?;
     ///
     /// let mut result = Vec::new();
-    /// bucket.get("foo").unwrap().read_to_end(&mut result)?;
+    /// bucket.get("foo").await.unwrap().read_to_end(&mut result).await?;
+    /// # assert_eq!(&bytes, &result);
     ///
-    /// # context.delete_object_store("get")?;
+    /// # context.delete_object_store("get").await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn get(&self, object_name: &str) -> io::Result<Object> {
-        let object_info = self.info(object_name)?;
-        if let Some(link) = object_info.link {
-            return self.get(&link.name);
+    pub async fn get(&self, object_name: &str) -> io::Result<Object> {
+        let mut object_name = object_name.to_string();
+        loop {
+            let object_info = self.info(&object_name).await?;
+            if let Some(link) = object_info.link {
+                object_name = link.name.clone();
+                continue;
+                //return self.get(&link.name).await;
+            }
+
+            let chunk_subject = format!("$O.{}.C.{}", self.name, object_info.nuid);
+            let subscription = self
+                .context
+                .subscribe_with_options(&chunk_subject, &SubscribeOptions::ordered())
+                .await?;
+
+            return Ok(Object::new(Box::pin(subscription.stream()), object_info));
         }
-
-        let chunk_subject = format!("$O.{}.C.{}", self.name, object_info.nuid);
-        let subscription = self
-            .context
-            .subscribe_with_options(&chunk_subject, &SubscribeOptions::ordered())?;
-
-        Ok(Object::new(subscription, object_info))
     }
 
     /// Places a delete marker and purges the data stream associated with the key.
@@ -531,31 +631,32 @@ impl ObjectStore {
     /// ```
     /// use std::io::Read;
     /// # use nats::object_store::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// let bucket = context.create_object_store(&Config {
     ///   bucket: "delete".to_string(),
     ///   ..Default::default()
-    /// })?;
+    /// }).await?;
     ///
     /// let bytes = vec![0, 1, 2, 3, 4];
-    /// bucket.put("foo", &mut bytes.as_slice())?;
+    /// bucket.put("foo", &mut bytes.as_slice()).await?;
     ///
-    /// bucket.delete("foo")?;
+    /// bucket.delete("foo").await?;
     ///
-    /// let info = bucket.info("foo")?;
+    /// let info = bucket.info("foo").await?;
     /// assert!(info.deleted);
     /// assert_eq!(info.size, 0);
     /// assert_eq!(info.chunks, 0);
     ///
-    /// # context.delete_object_store("delete")?;
+    /// # context.delete_object_store("delete").await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn delete(&self, object_name: &str) -> io::Result<()> {
-        let mut object_info = self.info(object_name)?;
+    pub async fn delete(&self, object_name: &str) -> io::Result<()> {
+        let mut object_info = self.info(object_name).await?;
         object_info.chunks = 0;
         object_info.size = 0;
         object_info.deleted = true;
@@ -573,13 +674,14 @@ impl ObjectStore {
         let subject = format!("$O.{}.M.{}", &self.name, &object_name);
         let message = Message::new(&subject, None, data, Some(headers));
 
-        self.context.publish_message(&message)?;
+        self.context.publish_message(&message).await?;
 
         let stream_name = format!("OBJ_{}", self.name);
         let chunk_subject = format!("$O.{}.C.{}", self.name, object_info.nuid);
 
         self.context
-            .purge_stream_subject(&stream_name, &chunk_subject)?;
+            .purge_stream_subject(&stream_name, &chunk_subject)
+            .await?;
 
         Ok(())
     }
@@ -589,60 +691,69 @@ impl ObjectStore {
     /// # Example
     ///
     /// ```no_run
-    /// use std::io::Read;
+    /// use futures::stream::StreamExt;
     /// # use nats::object_store::Config;
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// #
     /// let bucket = context.create_object_store(&Config {
     ///   bucket: "watch".to_string(),
     ///   ..Default::default()
-    /// })?;
+    /// }).await?;
     ///
-    /// let mut watch = bucket.watch()?;
+    /// let mut watch = bucket.watch().await?;
     ///
     /// let bytes = vec![0, 1, 2, 3, 4];
-    /// bucket.put("foo", &mut bytes.as_slice())?;
+    /// bucket.put("foo", &mut bytes.as_slice()).await?;
     ///
-    /// let info = watch.next().unwrap();
+    /// let info = watch.next().await.unwrap();
     /// assert_eq!(info.name, "foo");
     /// assert_eq!(info.size, bytes.len());
     ///
     /// let bytes = vec![0];
-    /// bucket.put("bar", &mut bytes.as_slice())?;
+    /// bucket.put("bar", &mut bytes.as_slice()).await?;
     ///
-    /// let info = watch.next().unwrap();
+    /// let info = watch.next().await.unwrap();
     /// assert_eq!(info.name, "bar");
     /// assert_eq!(info.size, bytes.len());
     ///
-    /// # context.delete_object_store("watch")?;
+    /// # context.delete_object_store("watch").await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn watch(&self) -> io::Result<Watch> {
+    pub async fn watch(&self) -> io::Result<Pin<Box<dyn Stream<Item = ObjectInfo>>>> {
         let subject = format!("$O.{}.M.>", &self.name);
-        let subscription = self.context.subscribe_with_options(
-            &subject,
-            &SubscribeOptions::ordered().deliver_last_per_subject(),
-        )?;
+        let subscription = self
+            .context
+            .subscribe_with_options(
+                &subject,
+                &SubscribeOptions::ordered().deliver_last_per_subject(),
+            )
+            .await?;
 
-        Ok(Watch { subscription })
+        Ok(Box::pin(
+            Watch {
+                subscription: Box::pin(subscription.stream()),
+            }
+            .into_stream(),
+        ))
     }
 }
 
 /// Iterator returned by `watch`
 pub struct Watch {
-    subscription: PushSubscription,
+    subscription: Pin<Box<dyn Stream<Item = Message>>>,
 }
 
-impl Iterator for Watch {
-    type Item = ObjectInfo;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.subscription.next() {
-            Some(message) => Some(serde_json::from_slice(&message.data).unwrap()),
-            None => None,
+impl Watch {
+    // convert into unpinned stream
+    fn into_stream(mut self) -> impl Stream<Item = ObjectInfo> {
+        async_stream::stream! {
+            while let Some(message) = self.subscription.next().await {
+                yield serde_json::from_slice(&message.data).unwrap();
+            }
         }
     }
 }

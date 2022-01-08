@@ -1,4 +1,4 @@
-// Copyright 2020-2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -12,9 +12,10 @@
 // limitations under the License.
 
 use std::convert::TryFrom;
-use std::io::prelude::*;
+//use std::io::prelude::*;
 use std::io::{self, Error, ErrorKind};
 use std::str::{self, FromStr};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::connect::ConnectInfo;
 use crate::{header::HeaderMap, inject_io_failure, ServerInfo};
@@ -58,10 +59,13 @@ pub(crate) enum ServerOp {
 
 // adapted from `std::io::BufRead::read_until`, made
 // to use a fixed buffer instead of a growable vector.
-fn read_line<R: BufRead + ?Sized>(r: &mut R, buf: &mut [u8]) -> io::Result<usize> {
+async fn read_line<R: AsyncBufReadExt + ?Sized + std::marker::Unpin>(
+    r: &mut R,
+    buf: &mut [u8],
+) -> io::Result<usize> {
     let mut read = 0;
     loop {
-        let available = match r.fill_buf() {
+        let available = match r.fill_buf().await {
             Ok(n) => n,
             Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
             Err(e) => return Err(e),
@@ -92,7 +96,9 @@ fn read_line<R: BufRead + ?Sized>(r: &mut R, buf: &mut [u8]) -> io::Result<usize
 /// Decodes a single operation from the server.
 ///
 /// If the connection is closed, `None` will be returned.
-pub(crate) fn decode(mut stream: impl BufRead) -> io::Result<Option<ServerOp>> {
+pub(crate) async fn decode(
+    mut stream: impl AsyncBufRead + std::marker::Unpin,
+) -> io::Result<Option<ServerOp>> {
     // Inject random I/O failures when testing.
     inject_io_failure()?;
 
@@ -101,7 +107,7 @@ pub(crate) fn decode(mut stream: impl BufRead) -> io::Result<Option<ServerOp>> {
     #[allow(clippy::uninit_assumed_init)]
     let mut command_buf: [u8; 4096] = unsafe { std::mem::MaybeUninit::uninit().assume_init() };
 
-    let command_len = read_line(&mut stream, &mut command_buf)?;
+    let command_len = read_line(&mut stream, &mut command_buf).await?;
     if command_len == 0 {
         // If zero bytes were read, the connection is closed.
         return Ok(None);
@@ -177,9 +183,9 @@ pub(crate) fn decode(mut stream: impl BufRead) -> io::Result<Option<ServerOp>> {
         // Read the payload.
         let mut payload = Vec::new();
         payload.resize(num_bytes as usize, 0_u8);
-        stream.read_exact(&mut payload[..])?;
+        stream.read_exact(&mut payload[..]).await?;
         // Read "\r\n".
-        stream.read_exact(&mut [0_u8; 2])?;
+        stream.read_exact(&mut [0_u8; 2]).await?;
 
         return Ok(Some(ServerOp::Msg {
             subject,
@@ -262,16 +268,16 @@ pub(crate) fn decode(mut stream: impl BufRead) -> io::Result<Option<ServerOp>> {
         // Read the header payload.
         let mut header_payload = Vec::new();
         header_payload.resize(num_header_bytes as usize, 0_u8);
-        stream.read_exact(&mut header_payload[..])?;
+        stream.read_exact(&mut header_payload[..]).await?;
 
         let headers = HeaderMap::try_from(&*header_payload)?;
 
         // Read the payload.
         let mut payload = Vec::new();
         payload.resize(num_payload_bytes as usize, 0_u8);
-        stream.read_exact(&mut payload[..])?;
+        stream.read_exact(&mut payload[..]).await?;
         // Read "\r\n".
-        stream.read_exact(&mut [0_u8; 2])?;
+        stream.read_exact(&mut [0_u8; 2]).await?;
 
         return Ok(Some(ServerOp::Hmsg {
             subject,
@@ -331,7 +337,10 @@ pub(crate) enum ClientOp<'a> {
 }
 
 /// Encodes a single operation from the client.
-pub(crate) fn encode(mut stream: impl Write, op: ClientOp<'_>) -> io::Result<()> {
+pub(crate) async fn encode(
+    mut stream: impl AsyncWrite + std::marker::Unpin,
+    op: ClientOp<'_>,
+) -> io::Result<()> {
     match &op {
         ClientOp::Connect(connect_info) => {
             let op = format!(
@@ -341,7 +350,7 @@ pub(crate) fn encode(mut stream: impl Write, op: ClientOp<'_>) -> io::Result<()>
                     "cannot serialize connect info"
                 ))?
             );
-            stream.write_all(op.as_bytes())?;
+            stream.write_all(op.as_bytes()).await?;
         }
 
         ClientOp::Pub {
@@ -349,21 +358,23 @@ pub(crate) fn encode(mut stream: impl Write, op: ClientOp<'_>) -> io::Result<()>
             reply_to,
             payload,
         } => {
-            stream.write_all(b"PUB ")?;
-            stream.write_all(subject.as_bytes())?;
-            stream.write_all(b" ")?;
+            stream.write_all(b"PUB ").await?;
+            stream.write_all(subject.as_bytes()).await?;
+            stream.write_all(b" ").await?;
 
             if let Some(reply_to) = reply_to {
-                stream.write_all(reply_to.as_bytes())?;
-                stream.write_all(b" ")?;
+                stream.write_all(reply_to.as_bytes()).await?;
+                stream.write_all(b" ").await?;
             }
 
             let mut buf = itoa::Buffer::new();
-            stream.write_all(buf.format(payload.len()).as_bytes())?;
-            stream.write_all(b"\r\n")?;
+            stream
+                .write_all(buf.format(payload.len()).as_bytes())
+                .await?;
+            stream.write_all(b"\r\n").await?;
 
-            stream.write_all(payload)?;
-            stream.write_all(b"\r\n")?;
+            stream.write_all(payload).await?;
+            stream.write_all(b"\r\n").await?;
         }
 
         ClientOp::Hpub {
@@ -372,13 +383,13 @@ pub(crate) fn encode(mut stream: impl Write, op: ClientOp<'_>) -> io::Result<()>
             headers,
             payload,
         } => {
-            stream.write_all(b"HPUB ")?;
-            stream.write_all(subject.as_bytes())?;
-            stream.write_all(b" ")?;
+            stream.write_all(b"HPUB ").await?;
+            stream.write_all(subject.as_bytes()).await?;
+            stream.write_all(b" ").await?;
 
             if let Some(reply_to) = reply_to {
-                stream.write_all(reply_to.as_bytes())?;
-                stream.write_all(b" ")?;
+                stream.write_all(reply_to.as_bytes()).await?;
+                stream.write_all(b" ").await?;
             }
 
             let header_bytes = headers.to_bytes();
@@ -387,18 +398,22 @@ pub(crate) fn encode(mut stream: impl Write, op: ClientOp<'_>) -> io::Result<()>
             let total_len = header_len + payload.len();
 
             let mut hlen_buf = itoa::Buffer::new();
-            stream.write_all(hlen_buf.format(header_len).as_bytes())?;
+            stream
+                .write_all(hlen_buf.format(header_len).as_bytes())
+                .await?;
 
-            stream.write_all(b" ")?;
+            stream.write_all(b" ").await?;
 
             let mut tlen_buf = itoa::Buffer::new();
-            stream.write_all(tlen_buf.format(total_len).as_bytes())?;
+            stream
+                .write_all(tlen_buf.format(total_len).as_bytes())
+                .await?;
 
-            stream.write_all(b"\r\n")?;
+            stream.write_all(b"\r\n").await?;
 
-            stream.write_all(&header_bytes)?;
-            stream.write_all(payload)?;
-            stream.write_all(b"\r\n")?;
+            stream.write_all(&header_bytes).await?;
+            stream.write_all(payload).await?;
+            stream.write_all(b"\r\n").await?;
         }
 
         ClientOp::Sub {
@@ -411,7 +426,7 @@ pub(crate) fn encode(mut stream: impl Write, op: ClientOp<'_>) -> io::Result<()>
             } else {
                 format!("SUB {} {}\r\n", subject, sid)
             };
-            stream.write_all(op.as_bytes())?;
+            stream.write_all(op.as_bytes()).await?;
         }
 
         ClientOp::Unsub { sid, max_msgs } => {
@@ -420,15 +435,15 @@ pub(crate) fn encode(mut stream: impl Write, op: ClientOp<'_>) -> io::Result<()>
             } else {
                 format!("UNSUB {}\r\n", sid)
             };
-            stream.write_all(op.as_bytes())?;
+            stream.write_all(op.as_bytes()).await?;
         }
 
         ClientOp::Ping => {
-            stream.write_all(b"PING\r\n")?;
+            stream.write_all(b"PING\r\n").await?;
         }
 
         ClientOp::Pong => {
-            stream.write_all(b"PONG\r\n")?;
+            stream.write_all(b"PONG\r\n").await?;
         }
     }
 

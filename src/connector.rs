@@ -1,4 +1,4 @@
-// Copyright 2020-2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -11,22 +11,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use parking_lot::{Mutex, MutexGuard};
+use async_trait::async_trait;
+use std::borrow::Borrow;
 use std::collections::HashMap;
-use std::io::prelude::*;
-use std::io::{self, BufReader, Error, ErrorKind};
-use std::net::{Shutdown, SocketAddr, TcpStream, ToSocketAddrs};
+use std::convert::TryFrom;
+use std::io::{self, Error, ErrorKind};
+use std::net::{SocketAddr, ToSocketAddrs};
+use std::ops::DerefMut;
+use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
+use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 use url::Url;
 
-use webpki::DNSNameRef;
+//use tokio_rustls::webpki::DnsNameRef;
 
 use crate::auth_utils;
 use crate::proto::{self, ClientOp, ServerOp};
-use crate::rustls::{ClientConfig, ClientSession, Session};
+use crate::rustls::{ClientConfig, /* ClientConnection, */ ServerName};
 use crate::secure_wipe::SecureString;
+use crate::tokio_rustls::client::TlsStream;
 use crate::{connect::ConnectInfo, inject_io_failure, AuthStyle, Options, ServerInfo};
 
 /// Maintains a list of servers and establishes connections.
@@ -36,7 +43,7 @@ use crate::{connect::ConnectInfo, inject_io_failure, AuthStyle, Options, ServerI
 /// backoff after failed connect attempts.
 pub(crate) struct Connector {
     /// A map of servers and number of connect attempts.
-    attempts: HashMap<Server, usize>,
+    attempts: HashMap<ServerAddress, usize>,
 
     /// Configured options for establishing connections.
     options: Arc<Options>,
@@ -45,72 +52,70 @@ pub(crate) struct Connector {
     tls_config: Arc<ClientConfig>,
 }
 
+/// load tls certs. This function uses blocking file io.
+/// load_native_certs could load a 300KB file (per docs.rs/rustls-native-certs)
+fn load_tls_certs(tls_options: Arc<Options>) -> io::Result<ClientConfig> {
+    // Include system root certificates.
+    //
+    // On Windows, some certificates cannot be loaded by rustls
+    // for whatever reason, so we simply skip them.
+    // See https://github.com/ctz/rustls-native-certs/issues/5
+    let roots = match rustls_native_certs::load_native_certs() {
+        Ok(store) => store.into_iter().map(|c| c.0).collect(),
+        Err(_) => Vec::new(),
+    };
+    let mut root_certs = crate::rustls::RootCertStore::empty();
+    let (_added, _ignored) = root_certs.add_parsable_certificates(&roots);
+
+    // Include user-provided certificates.
+    for path in &tls_options.certificates {
+        let f = std::fs::File::open(path)?;
+        let mut f = std::io::BufReader::new(f);
+        let certs = rustls_pemfile::certs(&mut f)?;
+        let (_added, _ignored) = root_certs.add_parsable_certificates(&certs);
+    }
+
+    let tls_config = tls_options
+        .tls_client_config
+        .clone()
+        .with_safe_defaults()
+        .with_root_certificates(root_certs);
+    let tls_config =
+        if let (Some(cert), Some(key)) = (&tls_options.client_cert, &tls_options.client_key) {
+            tls_config
+                .with_single_cert(auth_utils::load_certs(cert)?, auth_utils::load_key(key)?)
+                .map_err(|err| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("invalid client certificate and key pair: {}", err),
+                    )
+                })?
+        } else {
+            tls_config.with_no_client_auth()
+        };
+    Ok(tls_config)
+}
+
 impl Connector {
     /// Creates a new connector with the URLs and options.
-    pub(crate) fn new(url: &str, options: Arc<Options>) -> io::Result<Connector> {
-        let mut tls_config = options.tls_client_config.clone();
+    pub(crate) async fn new(
+        urls: Vec<ServerAddress>,
+        options: Arc<Options>,
+    ) -> io::Result<Connector> {
+        let tls_options = options.clone();
+        let tls_config = tokio::task::spawn_blocking(move || load_tls_certs(tls_options)).await??;
 
-        // Include system root certificates.
-        //
-        // On Windows, some certificates cannot be loaded by rustls
-        // for whatever reason, so we simply skip them.
-        // See https://github.com/ctz/rustls-native-certs/issues/5
-        let roots = match rustls_native_certs::load_native_certs() {
-            Ok(store) | Err((Some(store), _)) => store.roots,
-            Err((None, _)) => Vec::new(),
-        };
-        for root in roots {
-            tls_config.root_store.roots.push(root);
-        }
-
-        // Include user-provided certificates.
-        for path in &options.certificates {
-            let contents = std::fs::read(path)?;
-            let mut cursor = std::io::Cursor::new(contents);
-
-            tls_config
-                .root_store
-                .add_pem_file(&mut cursor)
-                .map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "invalid certificate file")
-                })?;
-        }
-
-        if let Some(cert) = &options.client_cert {
-            if let Some(key) = &options.client_key {
-                tls_config
-                    .set_single_client_cert(
-                        auth_utils::load_certs(cert)?,
-                        auth_utils::load_key(key)?,
-                    )
-                    .map_err(|err| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidInput,
-                            format!("invalid client certificate and key pair: {}", err),
-                        )
-                    })?;
-            }
-        }
-
-        let mut connector = Connector {
-            attempts: HashMap::new(),
+        let connector = Connector {
+            attempts: urls.into_iter().map(|url| (url, 0)).collect(),
             options,
             tls_config: Arc::new(tls_config),
         };
-
-        // Add all URLs in the comma-separated list.
-        for url in url.split(',') {
-            connector.add_url(url)?;
-        }
-
         Ok(connector)
     }
 
-    /// Adds an URL to the list of servers.
-    pub(crate) fn add_url(&mut self, url: &str) -> io::Result<()> {
-        let server = Server::new(url)?;
-        self.attempts.insert(server, 0);
-        Ok(())
+    /// Adds a URL to the list of servers.
+    pub(crate) fn add_server(&mut self, url: ServerAddress) {
+        self.attempts.insert(url, 0);
     }
 
     pub(crate) fn get_options(&self) -> Arc<Options> {
@@ -118,18 +123,18 @@ impl Connector {
     }
 
     /// Get the list of servers with enough reconnection attempts left
-    fn get_servers(&mut self) -> io::Result<Vec<Server>> {
-        let mut servers: Vec<Server> = self.attempts.keys().cloned().collect();
-
-        servers = servers
-            .into_iter()
-            .filter(|server| {
-                let reconnects = self.attempts.get_mut(server).unwrap();
-                match self.options.max_reconnects.as_ref() {
-                    Some(max) => max > reconnects,
-                    None => true,
-                }
-            })
+    fn get_servers(&mut self) -> io::Result<Vec<ServerAddress>> {
+        let servers: Vec<_> = self
+            .attempts
+            .iter()
+            .filter_map(
+                |(server, reconnects)| match self.options.max_reconnects.as_ref() {
+                    None => Some(server),
+                    Some(max) if reconnects < max => Some(server),
+                    Some(_) => None,
+                },
+            )
+            .cloned()
             .collect();
 
         if servers.is_empty() {
@@ -146,14 +151,17 @@ impl Connector {
     ///
     /// If `use_backoff` is `true`, this method will try connecting in a loop
     /// and will back off after failed connect attempts.
-    pub(crate) fn connect(&mut self, use_backoff: bool) -> io::Result<(ServerInfo, NatsStream)> {
+    pub(crate) async fn connect(
+        &mut self,
+        use_backoff: bool,
+    ) -> io::Result<(ServerInfo, NatsStream)> {
         // The last seen error, which gets returned if all connect attempts
         // fail.
         let mut last_err = Error::new(ErrorKind::AddrNotAvailable, "no socket addresses");
 
         loop {
             // Shuffle the list of servers.
-            let mut servers: Vec<Server> = self.get_servers()?;
+            let mut servers = self.get_servers()?;
             fastrand::shuffle(&mut servers);
 
             // Iterate over the server list in random order.
@@ -161,17 +169,14 @@ impl Connector {
                 // Calculate sleep duration for exponential backoff and bump the
                 // reconnect counter.
                 let reconnects = self.attempts.get_mut(server).unwrap();
-                let sleep_duration = self.options.reconnect_delay_callback.call(*reconnects);
+                let sleep_duration = self
+                    .options
+                    .reconnect_delay_callback
+                    .call(*reconnects)
+                    .await;
                 *reconnects += 1;
 
-                // Resolve the server URL to socket addresses.
-                let host = server.host();
-                let port = server.port();
-
-                // Inject random I/O failures when testing.
-                let fault_injection = inject_io_failure();
-
-                let lookup_res = fault_injection.and_then(|_| (host, port).to_socket_addrs());
+                let lookup_res = server.socket_addrs();
 
                 let mut addrs = match lookup_res {
                     Ok(addrs) => addrs.collect::<Vec<_>>(),
@@ -187,10 +192,12 @@ impl Connector {
                 for addr in addrs {
                     // Sleep for some time if this is not the first connection
                     // attempt for this server.
-                    thread::sleep(sleep_duration);
+                    if let Some(sleep_duration) = sleep_duration {
+                        tokio::time::sleep(sleep_duration).await;
+                    }
 
                     // Try connecting to this address.
-                    let res = self.connect_addr(addr, server);
+                    let res = self.connect_addr(addr, server).await;
 
                     // Check if connecting worked out.
                     let (server_info, stream) = match res {
@@ -203,7 +210,7 @@ impl Connector {
 
                     // Add URLs discovered through the INFO message.
                     for url in &server_info.connect_urls {
-                        self.add_url(url)?;
+                        self.add_server(url.parse()?);
                     }
 
                     *self.attempts.get_mut(server).unwrap() = 0;
@@ -219,26 +226,26 @@ impl Connector {
     }
 
     /// Attempts to establish a connection to a single socket address.
-    fn connect_addr(
+    async fn connect_addr(
         &self,
         addr: SocketAddr,
-        server: &Server,
+        server: &ServerAddress,
     ) -> io::Result<(ServerInfo, NatsStream)> {
         // Inject random I/O failures when testing.
         inject_io_failure()?;
 
         // Connect to the remote socket.
-        let mut stream = TcpStream::connect(addr)?;
+        let mut stream = TcpStream::connect(addr).await?;
         stream.set_nodelay(true)?;
 
         // Expect an INFO message.
         let mut line = crate::SecureVec::with_capacity(1024);
         while !line.ends_with(b"\r\n") {
             let byte = &mut [0];
-            stream.read_exact(byte)?;
+            stream.read_exact(byte).await?;
             line.push(byte[0]);
         }
-        let server_info = match proto::decode(&line[..])? {
+        let server_info = match proto::decode(&line[..]).await? {
             Some(ServerOp::Info(server_info)) => server_info,
             Some(op) => {
                 return Err(Error::new(
@@ -259,24 +266,28 @@ impl Connector {
             self.options.tls_required || server.tls_required() || server_info.tls_required;
 
         // Upgrade to TLS if required.
-        let session = if tls_required {
+        let mut stream = if tls_required {
             // Inject random I/O failures when testing.
             inject_io_failure()?;
 
             // Connect using TLS.
-            let dns_name = DNSNameRef::try_from_ascii_str(&server_info.host)
-                .or_else(|_| DNSNameRef::try_from_ascii_str(server.host()))
+            let dns_name = ServerName::try_from(server_info.host.as_str())
+                .or_else(|_| ServerName::try_from(server.host()))
                 .map_err(|_| {
                     io::Error::new(
                         io::ErrorKind::InvalidInput,
                         "cannot determine hostname for TLS connection",
                     )
                 })?;
-            Some(ClientSession::new(&self.tls_config, dns_name))
+            NatsStream::new_tls(
+                tokio_rustls::TlsConnector::from(self.tls_config.clone())
+                    .connect(dns_name, stream)
+                    .await
+                    .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))?,
+            )
         } else {
-            None
+            NatsStream::new_tcp(stream)
         };
-        let mut stream = NatsStream::new(stream, session)?;
 
         // Data that will be formatted as a CONNECT message.
         let mut connect_info = ConnectInfo {
@@ -329,23 +340,23 @@ impl Connector {
         }
 
         // Send CONNECT and PING messages.
-        proto::encode(&mut stream, ClientOp::Connect(&connect_info))?;
-        proto::encode(&mut stream, ClientOp::Ping)?;
-        stream.flush()?;
+        proto::encode(&mut stream, ClientOp::Connect(&connect_info)).await?;
+        proto::encode(&mut stream, ClientOp::Ping).await?;
+        stream.flush().await?;
 
         let mut reader = BufReader::new(stream.clone());
 
         // Wait for a PONG.
         loop {
-            match proto::decode(&mut reader)? {
+            match proto::decode(&mut reader).await? {
                 // If we get PONG, the server is happy and we're done
                 // connecting.
                 Some(ServerOp::Pong) => break,
 
                 // Respond to a PING with a PONG.
                 Some(ServerOp::Ping) => {
-                    proto::encode(&mut stream, ClientOp::Pong)?;
-                    stream.flush()?;
+                    proto::encode(&mut stream, ClientOp::Pong).await?;
+                    stream.flush().await?;
                 }
 
                 // No other operations should arrive at this time.
@@ -370,36 +381,209 @@ impl Connector {
     }
 }
 
-/// A parsed URL with defaults for port and scheme if needed.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct Server {
-    url: Url,
+/// A raw NATS stream of bytes.
+///
+/// The stream uses the TCP protocol, optionally secured by TLS.
+#[derive(Debug, Clone)]
+pub(crate) struct NatsStream {
+    flavor: Arc<Flavor>,
 }
 
-impl Server {
+#[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
+enum Flavor {
+    Tcp(Mutex<TcpStream>),
+    Tls(Mutex<TlsStream<TcpStream>>), //Tls(Box<Mutex<TlsStream<TcpStream>>>),
+}
+
+impl NatsStream {
+    fn new_tcp(tcp: TcpStream) -> Self {
+        tcp.set_nodelay(true).ok(); // ignore err if not supported
+        Self {
+            flavor: Arc::new(Flavor::Tcp(Mutex::new(tcp))),
+        }
+    }
+
+    fn new_tls(tls: TlsStream<TcpStream>) -> Self {
+        Self {
+            flavor: Arc::new(Flavor::Tls(Mutex::new(tls))),
+        }
+    }
+
+    /// Will attempt to shutdown the underlying stream.
+    pub(crate) async fn shutdown(&mut self) {
+        match Arc::<Flavor>::get_mut(&mut self.flavor).unwrap() {
+            Flavor::Tcp(tcp) => {
+                let tcp = tcp.get_mut();
+                let _ = tcp.shutdown().await;
+            }
+            Flavor::Tls(tls) => {
+                let tls = tls.get_mut();
+                let _ = tls.get_mut().0.shutdown().await;
+            }
+        }
+    }
+}
+
+macro_rules! impl_poll_flavors {
+    ( $fname:ident, $for:ident ) => {
+        fn $fname(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            let flavor: &Flavor = self.flavor.borrow();
+            match flavor {
+                Flavor::Tcp(tcp) => {
+                    if let Ok(mut guard) = tcp.try_lock() {
+                        Pin::new(guard.deref_mut()).$fname(cx)
+                    } else {
+                        Poll::Pending
+                    }
+                }
+                Flavor::Tls(tls) => {
+                    if let Ok(mut guard) = tls.try_lock() {
+                        Pin::new(guard.deref_mut()).$fname(cx)
+                    } else {
+                        Poll::Pending
+                    }
+                }
+            }
+        }
+    };
+}
+
+impl AsyncRead for NatsStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let flavor: &Flavor = self.flavor.borrow();
+        match flavor {
+            Flavor::Tcp(tcp) => {
+                if let Ok(mut guard) = tcp.try_lock() {
+                    Pin::new(guard.deref_mut()).poll_read(cx, buf)
+                } else {
+                    Poll::Pending
+                }
+            }
+            Flavor::Tls(tls) => {
+                if let Ok(mut guard) = tls.try_lock() {
+                    Pin::new(guard.deref_mut()).poll_read(cx, buf)
+                } else {
+                    Poll::Pending
+                }
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl AsyncWrite for NatsStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let flavor: &Flavor = self.flavor.borrow();
+        match flavor {
+            Flavor::Tcp(tcp) => {
+                if let Ok(mut guard) = tcp.try_lock() {
+                    Pin::new(guard.deref_mut()).poll_write(cx, buf)
+                } else {
+                    Poll::Pending
+                }
+            }
+            Flavor::Tls(tls) => {
+                if let Ok(mut guard) = tls.try_lock() {
+                    Pin::new(guard.deref_mut()).poll_write(cx, buf)
+                } else {
+                    Poll::Pending
+                }
+            }
+        }
+    }
+
+    impl_poll_flavors!(poll_flush, NatsStream);
+    impl_poll_flavors!(poll_shutdown, NatsStream);
+}
+
+//impl AsyncWriteExt for NatsStream {}
+
+/// Address of a NATS server.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ServerAddress(Url);
+
+/// Capability to convert into a list of NATS server addresses.
+///
+/// There are several implementations ensuring the easy passing of one or more server addresses to
+/// functions like [`crate::connect()`].
+pub trait IntoServerList {
+    /// Convert the instance into a list of [`ServerAddress`]es.
+    fn into_server_list(self) -> io::Result<Vec<ServerAddress>>;
+}
+
+impl FromStr for ServerAddress {
+    type Err = Error;
+
+    /// Parse an address of a NATS server.
+    ///
+    /// If not stated explicitly the `nats://` schema and port `4222` is assumed.
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let url: Url = if input.contains("://") {
+            input.parse()
+        } else {
+            format!("nats://{}", input).parse()
+        }
+        .map_err(|e| {
+            Error::new(
+                ErrorKind::InvalidInput,
+                format!("NATS server URL is invalid: {}", e),
+            )
+        })?;
+
+        Self::from_url(url)
+    }
+}
+
+impl ServerAddress {
+    /// Check if the URL is a valid NATS server address.
+    pub fn from_url(url: Url) -> io::Result<Self> {
+        if url.scheme() != "nats" && url.scheme() != "tls" {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                format!("invalid scheme for NATS server URL: {}", url.scheme()),
+            ));
+        }
+
+        Ok(Self(url))
+    }
+
+    /// Turn the server address into a standard URL.
+    pub fn into_inner(self) -> Url {
+        self.0
+    }
+
     /// Returns if tls is required by the client for this server.
-    fn tls_required(&self) -> bool {
-        self.url.scheme() == "tls"
+    pub fn tls_required(&self) -> bool {
+        self.0.scheme() == "tls"
     }
 
     /// Returns if the server url had embedded username and password.
-    fn has_user_pass(&self) -> bool {
-        self.url.username() != ""
+    pub fn has_user_pass(&self) -> bool {
+        self.0.username() != ""
     }
 
     /// Returns the host.
-    fn host(&self) -> &str {
-        self.url.host_str().unwrap()
+    pub fn host(&self) -> &str {
+        self.0.host_str().unwrap()
     }
 
     /// Returns the port.
-    fn port(&self) -> u16 {
-        self.url.port().unwrap()
+    pub fn port(&self) -> u16 {
+        self.0.port().unwrap_or(4222)
     }
 
     /// Returns the optional username in the url.
-    fn username(&self) -> Option<SecureString> {
-        let user = self.url.username();
+    pub fn username(&self) -> Option<SecureString> {
+        let user = self.0.username();
         if user.is_empty() {
             None
         } else {
@@ -408,232 +592,66 @@ impl Server {
     }
 
     /// Returns the optional password in the url.
-    fn password(&self) -> Option<SecureString> {
-        self.url
+    pub fn password(&self) -> Option<SecureString> {
+        self.0
             .password()
             .map(|password| SecureString::from(password.to_string()))
     }
 
-    /// Creates a new server from an URL.
+    /// Return the sockets from resolving the server address.
     ///
-    /// Returns an error if the URL cannot be parsed.
-    fn new(raw_url: &str) -> io::Result<Server> {
-        let mut url_str = raw_url.to_string();
-
-        // Make sure this isn't a comma-separated URL list.
-        if url_str.contains(',') {
-            return Err(Error::new(
-                ErrorKind::InvalidInput,
-                "only one server URL should be passed to Server::new",
-            ));
-        }
-
-        // Check for scheme. Url::parse requires it.
-        if !url_str.contains("://") {
-            url_str = format!("nats://{}", url_str);
-        }
-
-        let mut url = if let Ok(url) = Url::parse(&url_str) {
-            url
-        } else {
-            return Err(Error::new(
-                ErrorKind::InvalidInput,
-                format!("invalid URL provided: {}", url_str),
-            ));
-        };
-
-        // Set default port.
-        if url.port().is_none() {
-            url.set_port(Some(4222)).ok();
-        }
-
-        Ok(Server { url })
+    /// # Fault injection
+    ///
+    /// If compiled with the `"fault_injection"` feature this method might fail artificially.
+    pub fn socket_addrs(&self) -> io::Result<impl Iterator<Item = SocketAddr>> {
+        inject_io_failure().and_then(|_| (self.host(), self.port()).to_socket_addrs())
     }
 }
 
-/// A raw NATS stream of bytes.
-///
-/// The stream uses the TCP protocol, optionally secured by TLS.
-#[derive(Clone)]
-pub(crate) struct NatsStream {
-    flavor: Arc<Flavor>,
-}
-
-enum Flavor {
-    Tcp(TcpStream),
-    Tls(Box<Mutex<TlsStream>>),
-}
-
-struct TlsStream {
-    tcp: TcpStream,
-    session: ClientSession,
-}
-
-impl NatsStream {
-    /// Creates a NATS stream from a TCP stream and an optional TLS session.
-    fn new(tcp: TcpStream, session: Option<ClientSession>) -> io::Result<NatsStream> {
-        let flavor = match session {
-            None => Flavor::Tcp(tcp),
-            Some(session) => {
-                tcp.set_nonblocking(true)?;
-                Flavor::Tls(Box::new(Mutex::new(TlsStream { tcp, session })))
-            }
-        };
-        let flavor = Arc::new(flavor);
-        Ok(NatsStream { flavor })
-    }
-
-    pub(crate) fn set_write_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
-        match &*self.flavor {
-            Flavor::Tcp(tcp) => tcp.set_write_timeout(timeout),
-            Flavor::Tls(tls) => tls.lock().tcp.set_write_timeout(timeout),
-        }
-    }
-
-    /// Will attempt to shutdown the underlying stream.
-    pub(crate) fn shutdown(&self) {
-        match &*self.flavor {
-            Flavor::Tcp(tcp) => tcp.shutdown(Shutdown::Both),
-            Flavor::Tls(tls) => tls.lock().tcp.shutdown(Shutdown::Both),
-        }
-        .ok();
+impl<'s> IntoServerList for &'s str {
+    fn into_server_list(self) -> io::Result<Vec<ServerAddress>> {
+        self.split(',').map(|url| url.parse()).collect()
     }
 }
 
-impl Read for NatsStream {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        <&NatsStream as Read>::read(&mut &*self, buf)
+impl<'s> IntoServerList for &'s [&'s str] {
+    fn into_server_list(self) -> io::Result<Vec<ServerAddress>> {
+        self.iter().map(|url| url.parse()).collect()
     }
 }
 
-impl Read for &NatsStream {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match &*self.flavor {
-            Flavor::Tcp(tcp) => (&*tcp).read(buf),
-            Flavor::Tls(tls) => tls_op(tls, |session, eof| match session.read(buf) {
-                Ok(0) if !eof => Err(io::ErrorKind::WouldBlock.into()),
-                res => res,
-            }),
-        }
+impl<'s, const N: usize> IntoServerList for &'s [&'s str; N] {
+    fn into_server_list(self) -> io::Result<Vec<ServerAddress>> {
+        self.as_ref().into_server_list()
     }
 }
 
-impl Write for NatsStream {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        <&NatsStream as Write>::write(&mut &*self, buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        <&NatsStream as Write>::flush(&mut &*self)
+impl IntoServerList for String {
+    fn into_server_list(self) -> io::Result<Vec<ServerAddress>> {
+        self.as_str().into_server_list()
     }
 }
 
-impl Write for &NatsStream {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match &*self.flavor {
-            Flavor::Tcp(tcp) => (&*tcp).write(buf),
-            Flavor::Tls(tls) => tls_op(tls, |session, _| session.write(buf)),
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        match &*self.flavor {
-            Flavor::Tcp(tcp) => (&*tcp).flush(),
-            Flavor::Tls(tls) => tls_op(tls, |session, _| session.flush()),
-        }
+impl<'s> IntoServerList for &'s String {
+    fn into_server_list(self) -> io::Result<Vec<ServerAddress>> {
+        self.as_str().into_server_list()
     }
 }
 
-/// Performs a blocking operation on a TLS stream.
-///
-/// However, note that the inner TCP stream is in non-blocking mode.
-fn tls_op<T: std::fmt::Debug>(
-    tls: &Mutex<TlsStream>,
-    mut op: impl FnMut(&mut ClientSession, bool) -> io::Result<T>,
-) -> io::Result<T> {
-    loop {
-        let mut tls = tls.lock();
-        let TlsStream { tcp, session } = &mut *tls;
-        let mut eof = false;
-
-        // If necessary, read TLS messages.
-        if session.wants_read() {
-            match session.read_tls(tcp) {
-                Ok(0) => eof = true,
-                Ok(_) => session
-                    .process_new_packets()
-                    .map_err(|err| Error::new(ErrorKind::Other, format!("TLS error: {}", err)))?,
-                Err(err) if err.kind() == ErrorKind::WouldBlock => {}
-                Err(err) => return Err(err),
-            }
-        }
-
-        // If necessary, write TLS messages.
-        if session.wants_write() {
-            match session.write_tls(tcp) {
-                Ok(_) => {}
-                Err(err) if err.kind() == ErrorKind::WouldBlock => {}
-                Err(err) => return Err(err),
-            }
-        }
-
-        // Try the non-blocking read/write/flush operation.
-        match op(session, eof) {
-            Err(err) if err.kind() == ErrorKind::WouldBlock => {}
-            res => return res,
-        }
-
-        tls_wait(tls)?;
+impl IntoServerList for ServerAddress {
+    fn into_server_list(self) -> io::Result<Vec<ServerAddress>> {
+        Ok(vec![self])
     }
 }
 
-/// Waits until the TLS stream becomes ready.
-fn tls_wait(mut tls: MutexGuard<'_, TlsStream>) -> io::Result<()> {
-    #[cfg(unix)]
-    use {
-        libc::{self as sys, poll, pollfd},
-        std::os::unix::io::AsRawFd,
-    };
-    #[cfg(windows)]
-    use {
-        std::os::windows::io::AsRawSocket,
-        winapi::um::winsock2::{self as sys, WSAPoll as poll, WSAPOLLFD as pollfd},
-    };
-
-    let TlsStream { tcp, session } = &mut *tls;
-
-    // Initialize a pollfd object with readiness events we're looking for.
-    #[allow(trivial_numeric_casts)]
-    let mut pollfd = pollfd {
-        #[cfg(unix)]
-        fd: tcp.as_raw_fd() as _,
-        #[cfg(windows)]
-        fd: tcp.as_raw_socket() as _,
-        #[cfg(unix)]
-        events: sys::POLLERR,
-        #[cfg(windows)]
-        events: 0,
-        revents: 0,
-    };
-    if session.wants_read() {
-        pollfd.events |= sys::POLLIN;
+impl IntoServerList for Vec<ServerAddress> {
+    fn into_server_list(self) -> io::Result<Vec<ServerAddress>> {
+        Ok(self)
     }
-    if session.wants_write() {
-        pollfd.events |= sys::POLLOUT;
+}
+
+impl IntoServerList for io::Result<Vec<ServerAddress>> {
+    fn into_server_list(self) -> io::Result<Vec<ServerAddress>> {
+        self
     }
-
-    // Make sure to drop the lock before blocking on `poll()`!
-    // This way concurrent operations on the TLS stream won't block each other.
-    drop(tls);
-
-    // Wait until the TCP stream becomes ready.
-    #[allow(unsafe_code)]
-    while unsafe { poll(&mut pollfd, 1, -1) } == -1 {
-        let err = Error::last_os_error();
-        if err.kind() != io::ErrorKind::Interrupted {
-            return Err(err);
-        }
-    }
-
-    Ok(())
 }

@@ -1,4 +1,4 @@
-// Copyright 2020-2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -19,8 +19,7 @@ use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 /// This function is useful for inducing random jitter into our operations that
 /// trigger cross-thread communication, shaking out more possible interleavings
 /// quickly. It gets fully eliminated by the compiler in non-test code.
-pub fn inject_delay() {
-    use std::thread;
+pub async fn inject_delay() {
     use std::time::Duration;
 
     static GLOBAL_DELAYS: AtomicUsize = AtomicUsize::new(0);
@@ -45,14 +44,11 @@ pub fn inject_delay() {
 
     if fastrand::i32(..10) == 0 {
         let duration = fastrand::u64(..50);
-
-        #[allow(clippy::cast_possible_truncation)]
-        #[allow(clippy::cast_sign_loss)]
-        thread::sleep(Duration::from_millis(duration));
+        tokio::time::sleep(Duration::from_millis(duration)).await;
     }
 
     if fastrand::i32(..2) == 0 {
-        thread::yield_now();
+        std::thread::yield_now();
     }
 }
 

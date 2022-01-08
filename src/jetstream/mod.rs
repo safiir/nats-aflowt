@@ -1,4 +1,4 @@
-// Copyright 2020-2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -18,13 +18,14 @@
 //! Create a new stream with default options:
 //!
 //! ```no_run
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let nc = nats::connect("my_server::4222")?;
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let nc = nats::connect("my_server::4222").await?;
 //! let js = nats::jetstream::new(nc);
 //!
 //! // add_stream converts a str into a
 //! // default `StreamConfig`.
-//! js.add_stream("my_stream")?;
+//! js.add_stream("my_stream").await?;
 //!
 //! # Ok(()) }
 //! ```
@@ -32,10 +33,11 @@
 //! Create a new stream with configuration:
 //!
 //! ```no_run
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use nats::jetstream::{StreamConfig, StorageType};
 //!
-//! let nc = nats::connect("my_server::4222")?;
+//! let nc = nats::connect("my_server::4222").await?;
 //! let js = nats::jetstream::new(nc);
 //!
 //! js.add_stream(StreamConfig {
@@ -43,7 +45,7 @@
 //!     max_bytes: 5 * 1024 * 1024 * 1024,
 //!     storage: StorageType::Memory,
 //!     ..Default::default()
-//! })?;
+//! }).await?;
 //!
 //! # Ok(()) }
 //! ```
@@ -51,12 +53,13 @@
 //! Create a new consumer:
 //!
 //! ```no_run
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let nc = nats::connect("my_server::4222")?;
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let nc = nats::connect("my_server::4222").await?;
 //! let js = nats::jetstream::new(nc);
 //!
-//! js.add_stream("my_stream")?;
-//! js.add_consumer("my_stream", "my_consumer")?;
+//! js.add_stream("my_stream").await?;
+//! js.add_consumer("my_stream", "my_consumer").await?;
 //!
 //! # Ok(()) }
 //! ```
@@ -64,17 +67,18 @@
 //! Create a new consumer with configuration:
 //!
 //! ```no_run
-//! use nats::jetstream::{ ConsumerConfig };
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let nc = nats::connect("my_server::4222")?;
+//! use nats::jetstream::{ConsumerConfig};
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let nc = nats::connect("my_server::4222").await?;
 //! let js = nats::jetstream::new(nc);
 //!
-//! js.add_stream("my_stream")?;
+//! js.add_stream("my_stream").await?;
 //! js.add_consumer("my_stream", ConsumerConfig {
 //!   deliver_subject: Some("my_deliver_subject".to_string()),
 //!   durable_name: Some("my_durable_consumer".to_string()),
 //!   ..Default::default()
-//! })?;
+//! }).await?;
 //!
 //! # Ok(()) }
 //! ```
@@ -82,40 +86,43 @@
 //! Create a new subscription:
 //!
 //! ```no_run
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let nc = nats::connect("my_server::4222")?;
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!
+//! let nc = nats::connect("my_server::4222").await?;
 //! let js = nats::jetstream::new(nc);
 //!
-//! js.add_stream("my_stream")?;
-//! let subscription = js.subscribe("my_stream")?;
+//! js.add_stream("my_stream").await?;
+//! let subscription = js.subscribe("my_stream").await?;
 //!
 //! # Ok(()) }
 //! ```
-//! This will attempt to bind to an existing consumer if it exists, otherwise it will create a new
-//! internally managed consumer resource that gets destroyed when the subscription is dropped.
 //!
+
+use crate::{BoxFuture, Stream};
+use pin_project::pin_project;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::{
     collections::{HashSet, VecDeque},
     convert::TryFrom,
     error, fmt,
     fmt::Debug,
     io::{self, ErrorKind},
+    pin::Pin,
+    time::Duration,
 };
-
-use parking_lot::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
-
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_repr::{Deserialize_repr, Serialize_repr};
+use tokio::sync::Mutex;
 
 const ORDERED_IDLE_HEARTBEAT: Duration = Duration::from_nanos(5_000_000_000);
 
-// TODO re-organize this into a jetstream directory
-pub use crate::jetstream_push_subscription::PushSubscription;
-pub use crate::jetstream_types::*;
+mod push_subscription;
+mod types;
+
+pub use push_subscription::PushSubscription;
+pub use types::*;
 
 use crate::{
     header::{self, HeaderMap},
@@ -150,7 +157,7 @@ impl JetStreamOptions {
     /// # Example
     ///
     /// ```
-    /// let options = nats::JetStreamOptions::new();
+    /// let options = nats::jetstream::JetStreamOptions::new();
     /// ```
     pub fn new() -> JetStreamOptions {
         JetStreamOptions::default()
@@ -161,9 +168,10 @@ impl JetStreamOptions {
     /// # Example
     ///
     /// ```
-    /// let options = nats::JetStreamOptions::new()
+    /// let options = nats::jetstream::JetStreamOptions::new()
     ///     .api_prefix("some_exported_prefix".to_string());
     /// ```
+    #[must_use]
     pub fn api_prefix(mut self, mut api_prefix: String) -> Self {
         if !api_prefix.ends_with('.') {
             api_prefix.push('.');
@@ -178,9 +186,10 @@ impl JetStreamOptions {
     /// # Example
     ///
     /// ```
-    /// let options = nats::JetStreamOptions::new()
+    /// let options = nats::jetstream::JetStreamOptions::new()
     ///   .domain("some_domain");
     /// ```
+    #[must_use]
     pub fn domain(self, domain: &str) -> Self {
         if domain.is_empty() {
             self.api_prefix("".to_string())
@@ -475,7 +484,9 @@ struct PagedResponse<T> {
 
 /// An iterator over paged `JetStream` API operations.
 #[derive(Debug)]
+#[pin_project]
 pub struct PagedIterator<'a, T> {
+    #[pin]
     manager: &'a JetStream,
     subject: String,
     offset: i64,
@@ -483,52 +494,132 @@ pub struct PagedIterator<'a, T> {
     done: bool,
 }
 
-impl<'a, T> std::iter::FusedIterator for PagedIterator<'a, T> where T: DeserializeOwned + Debug {}
-
-impl<'a, T> Iterator for PagedIterator<'a, T>
+impl<'x, 'y, 'z: 'x, T: 'x> PagedIterator<'z, T>
 where
     T: DeserializeOwned + Debug,
 {
-    type Item = io::Result<T>;
-
-    fn next(&mut self) -> Option<io::Result<T>> {
-        if self.done {
-            return None;
-        }
-        if !self.items.is_empty() {
-            return Some(Ok(self.items.pop_front().unwrap()));
-        }
-        let req = serde_json::ser::to_vec(&PagedRequest {
-            offset: self.offset,
-        })
-        .unwrap();
-
-        let res: io::Result<PagedResponse<T>> = self.manager.js_request(&self.subject, &req);
-
-        let mut page = match res {
-            Err(e) => {
-                self.done = true;
-                return Some(Err(e));
+    fn to_stream(mut self: Pin<Box<Self>>) -> impl Stream<Item = io::Result<T>> + 'x {
+        async_stream::try_stream! {
+            if !self.done {
+                if !self.items.is_empty() {
+                    yield self.items.pop_front().unwrap();
+                }
+                let req = serde_json::ser::to_vec(&PagedRequest {
+                    offset: self.offset,
+                })
+                .unwrap();
+                let mut page: PagedResponse<T> =
+                    match self.manager.js_request(&self.subject, &req).await {
+                        Ok(page) => page,
+                        Err(e) => {
+                            (*self).done = true;
+                            Err(e)?
+                        }
+                    };
+                if page.items.is_none() {
+                    (*self).done = true;
+                } else {
+                    let items = page.items.take().unwrap();
+                    (*self).offset += i64::try_from(items.len()).unwrap();
+                    (*self).items = items;
+                    if self.items.is_empty() {
+                        (*self).done = true;
+                    } else {
+                        yield self.items.pop_front().unwrap()
+                    }
+                }
             }
-            Ok(page) => page,
-        };
-
-        if page.items.is_none() {
-            self.done = true;
-            return None;
         }
+    }
+}
 
-        let items = page.items.take().unwrap();
+#[derive(Debug, Clone)]
+struct SubscriptionPreprocessor {
+    sequence_pair: Arc<Mutex<SequencePair>>,
+    context: JetStream,
+    consumer_config: ConsumerConfig,
+    stream_name: String,
+    shared_sid: Arc<AtomicU64>,
+}
 
-        self.offset += i64::try_from(items.len()).unwrap();
-        self.items = items;
+impl crate::client::Preprocessor for SubscriptionPreprocessor {
+    fn process<'proc>(&'proc self, sid: u64, message: &'proc Message) -> BoxFuture<'proc, bool> {
+        Box::pin(async move {
+            if message.is_flow_control() {
+                return false;
+            }
 
-        if self.items.is_empty() {
-            self.done = true;
-            None
-        } else {
-            Some(Ok(self.items.pop_front().unwrap()))
-        }
+            // Track and respond to idle heartbeats
+            if message.is_idle_heartbeat() {
+                let maybe_consumer_stalled = message
+                    .headers
+                    .as_ref()
+                    .and_then(|headers| {
+                        headers
+                            .get(header::NATS_CONSUMER_STALLED)
+                            .map(|set| set.iter().cloned().next())
+                    })
+                    .flatten();
+
+                if let Some(consumer_stalled) = maybe_consumer_stalled {
+                    self.context
+                        .connection
+                        .try_publish_with_reply_or_headers(&consumer_stalled, None, None, b"")
+                        .await;
+                }
+
+                let maybe_consumer_seq = message
+                    .headers
+                    .as_ref()
+                    .and_then(|headers| {
+                        headers
+                            .get(header::NATS_LAST_CONSUMER)
+                            .map(|set| set.iter().cloned().next())
+                    })
+                    .flatten();
+
+                if let Some(consumer_seq) = maybe_consumer_seq {
+                    let consumer_seq = consumer_seq.parse::<u64>().unwrap();
+                    let sequence_info = self.sequence_pair.lock().await;
+                    if consumer_seq != sequence_info.consumer_seq {
+                        return self
+                            .context
+                            .handle_sequence_mismatch(
+                                self.consumer_config.clone(),
+                                self.sequence_pair.clone(),
+                                self.stream_name.clone(),
+                                self.shared_sid.clone(),
+                                sid,
+                                sequence_info.stream_seq + 1,
+                            )
+                            .await;
+                    }
+                }
+                return false;
+            }
+
+            // Track messages for sequence mismatches.
+            if let Some(message_info) = message.jetstream_message_info() {
+                let mut sequence_info = self.sequence_pair.lock().await;
+                if message_info.consumer_seq != sequence_info.consumer_seq + 1 {
+                    return self
+                        .context
+                        .handle_sequence_mismatch(
+                            self.consumer_config.clone(),
+                            self.sequence_pair.clone(),
+                            self.stream_name.clone(),
+                            self.shared_sid.clone(),
+                            sid,
+                            sequence_info.stream_seq + 1,
+                        )
+                        .await;
+                }
+
+                sequence_info.stream_seq = message_info.stream_seq;
+                sequence_info.consumer_seq = message_info.consumer_seq;
+            }
+            false
+        })
     }
 }
 
@@ -549,32 +640,35 @@ impl JetStream {
     }
 
     /// Publishes a message to `JetStream`
-    pub fn publish(&self, subject: &str, data: impl AsRef<[u8]>) -> io::Result<PublishAck> {
+    pub async fn publish(&self, subject: &str, data: impl AsRef<[u8]>) -> io::Result<PublishAck> {
         self.publish_with_options_or_headers(subject, None, None, data)
+            .await
     }
 
     /// Publishes a message to `JetStream` with the given options.
-    pub fn publish_with_options(
+    pub async fn publish_with_options(
         &self,
         subject: &str,
         data: impl AsRef<[u8]>,
         options: &PublishOptions,
     ) -> io::Result<PublishAck> {
         self.publish_with_options_or_headers(subject, Some(options), None, data)
+            .await
     }
 
     /// Publishes a `Message` to `JetStream`.
-    pub fn publish_message(&self, message: &Message) -> io::Result<PublishAck> {
+    pub async fn publish_message(&self, message: &Message) -> io::Result<PublishAck> {
         self.publish_with_options_or_headers(
             &message.subject,
             None,
             message.headers.as_ref(),
             &message.data,
         )
+        .await
     }
 
     /// Publishes a `Message` to `JetStream` with the given options.
-    pub fn publish_message_with_options(
+    pub async fn publish_message_with_options(
         &self,
         message: &Message,
         options: &PublishOptions,
@@ -585,10 +679,11 @@ impl JetStream {
             message.headers.as_ref(),
             &message.data,
         )
+        .await
     }
 
     /// Publishes a message to `JetStream` with the given options and/or headers.
-    pub(crate) fn publish_with_options_or_headers(
+    pub(crate) async fn publish_with_options_or_headers(
         &self,
         subject: &str,
         maybe_options: Option<&PublishOptions>,
@@ -650,12 +745,10 @@ impl JetStream {
 
         let maybe_timeout = maybe_options.and_then(|options| options.timeout);
 
-        let res_msg = self.connection.request_with_headers_or_timeout(
-            subject,
-            maybe_headers.as_ref(),
-            maybe_timeout,
-            msg,
-        )?;
+        let res_msg = self
+            .connection
+            .request_with_headers_or_timeout(subject, maybe_headers.as_ref(), maybe_timeout, msg)
+            .await?;
 
         let res: ApiResponse<PublishAck> = serde_json::de::from_slice(&res_msg.data)?;
         match res {
@@ -676,19 +769,22 @@ impl JetStream {
     /// # Example
     ///
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// use nats::Stream;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// # context.add_stream("ephemeral");
-    /// # context.publish("ephemeral", "hello");
+    /// # context.publish("ephemeral", "hello").await;
     /// #    
-    /// let subscription = context.subscribe("ephemeral")?;
-    /// println!("Received message {:?}", subscription.next());
+    /// let subscription = context.subscribe("ephemeral").await?;
+    /// println!("Received message {:?}", subscription.next().await);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn subscribe(&self, subject: &str) -> io::Result<PushSubscription> {
-        self.do_push_subscribe(subject, None, None)
+    pub async fn subscribe(&self, subject: &str) -> io::Result<PushSubscription> {
+        let ps = self.do_push_subscribe(subject, None, None).await?;
+        Ok(ps)
     }
 
     /// Creates a push consumer subscription with options.
@@ -700,19 +796,23 @@ impl JetStream {
     ///
     /// ```no_run
     /// # use nats::jetstream::{ SubscribeOptions };
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
     /// # let js = nats::jetstream::new(nc);
-    /// let sub = js.subscribe_with_options("foo", &SubscribeOptions::bind("existing_stream".to_string(), "existing_consumer".to_string()))?;
+    /// let sub = js.subscribe_with_options("foo",
+    ///       &SubscribeOptions::bind("existing_stream".to_string(),
+    ///       "existing_consumer".to_string())).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn subscribe_with_options(
+    pub async fn subscribe_with_options(
         &self,
         subject: &str,
         options: &SubscribeOptions,
     ) -> io::Result<PushSubscription> {
-        self.do_push_subscribe(subject, None, Some(options))
+        let ps = self.do_push_subscribe(subject, None, Some(options)).await?;
+        Ok(ps)
     }
 
     /// Creates a push-based consumer subscription with a queue group.
@@ -721,16 +821,22 @@ impl JetStream {
     /// # Example
     ///
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let client = nats::connect("demo.nats.io").await?;
     /// # let context = nats::jetstream::new(client);
     /// # context.add_stream("queue");
-    /// let subscription = context.queue_subscribe("queue", "queue_group")?;
+    /// let subscription = context.queue_subscribe("queue", "queue_group").await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn queue_subscribe(&self, subject: &str, queue: &str) -> io::Result<PushSubscription> {
-        self.do_push_subscribe(subject, Some(queue), None)
+    pub async fn queue_subscribe(
+        &self,
+        subject: &str,
+        queue: &str,
+    ) -> io::Result<PushSubscription> {
+        let ps = self.do_push_subscribe(subject, Some(queue), None).await?;
+        Ok(ps)
     }
 
     /// Creates a push-based consumer subscription with a queue group and options.
@@ -738,16 +844,66 @@ impl JetStream {
     /// If a durable name is not set within the options provided options then the queue group will
     /// be used as the durable name.
     ///
-    pub fn queue_subscribe_with_options(
+    pub async fn queue_subscribe_with_options(
         &self,
         subject: &str,
         queue: &str,
         options: &SubscribeOptions,
     ) -> io::Result<PushSubscription> {
-        self.do_push_subscribe(subject, Some(queue), Some(options))
+        let ps = self
+            .do_push_subscribe(subject, Some(queue), Some(options))
+            .await?;
+        Ok(ps)
     }
 
-    fn do_push_subscribe(
+    async fn handle_sequence_mismatch(
+        &self,
+        consumer_config: ConsumerConfig,
+        sequence_pair: Arc<Mutex<SequencePair>>,
+        stream_name: String,
+        shared_sid: Arc<AtomicU64>,
+        sid: u64,
+        start_seq: u64,
+    ) -> bool {
+        // Immediately mute the subscription so that messages no longer get delivered to it.
+        //
+        // If we are already muted then the triggering slipped through and we can
+        // return early as a resubscription will already be on the way.
+        if !self.connection.0.client.mute(sid).await.unwrap() {
+            return true;
+        }
+
+        let context = self.clone();
+        tokio::spawn(async move {
+            let new_deliver_subject = context.connection.new_inbox();
+            let result = context
+                .connection
+                .0
+                .client
+                .resubscribe(sid, &new_deliver_subject)
+                .await;
+
+            if let Ok(new_sid) = result {
+                shared_sid.store(new_sid, Ordering::Relaxed);
+
+                let mut consumer_config = consumer_config.clone();
+                consumer_config.deliver_subject = Some(new_deliver_subject);
+                consumer_config.deliver_policy = DeliverPolicy::ByStartSeq;
+                consumer_config.opt_start_seq = Some(start_seq);
+                context
+                    .add_consumer(stream_name, consumer_config)
+                    .await
+                    .ok();
+            }
+
+            let mut sequence_info = sequence_pair.lock().await;
+            sequence_info.consumer_seq = 0;
+        });
+
+        true
+    }
+
+    async fn do_push_subscribe(
         &self,
         subject: &str,
         maybe_queue: Option<&str>,
@@ -870,7 +1026,7 @@ impl JetStream {
                     ));
                 }
             } else {
-                // Prevent an user from attempting to create a queue subscription on
+                // Prevent a user from attempting to create a queue subscription on
                 // a consumer that was not created with a deliver group.
                 if maybe_queue.is_some() {
                     return Err(io::Error::new(
@@ -897,14 +1053,14 @@ impl JetStream {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
                         format!("configuration requests durable name to be {:?}, but consumer's value is {:?}", options.durable_name, info.config.durable_name
-                    )));
+                        )));
                 }
 
                 if options.description.is_some() && options.description != info.config.description {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
                         format!("configuration requests description to be {:?}, but consumer's value is {:?}", options.description, info.config.description
-                    )));
+                        )));
                 }
 
                 if options.deliver_policy.is_some()
@@ -913,7 +1069,7 @@ impl JetStream {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
                         format!("configuration requests deliver policy to be {:?}, but consumer's value is {:?}", options.deliver_policy, info.config.deliver_policy
-                    )));
+                        )));
                 }
 
                 if options.opt_start_seq.is_some()
@@ -922,16 +1078,16 @@ impl JetStream {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
                         format!("configuration requests optional start sequence to be {:?}, but consumer's value is {:?}", options.opt_start_seq, info.config.opt_start_seq
-                    )));
+                        )));
                 }
 
                 if options.opt_start_time.is_some()
                     && options.opt_start_time != info.config.opt_start_time
                 {
                     return Err(io::Error::new(
-                       io::ErrorKind::Other,
-                       format!("configuration requests optional start time to be {:?}, but consumer's value is {:?}", options.opt_start_time, info.config.opt_start_time
-                   )));
+                        io::ErrorKind::Other,
+                        format!("configuration requests optional start time to be {:?}, but consumer's value is {:?}", options.opt_start_time, info.config.opt_start_time
+                        )));
                 }
 
                 if options.ack_policy.is_some()
@@ -940,14 +1096,17 @@ impl JetStream {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
                         format!("configuration requests ack policy to be {:?}, but consumer's value is {:?}", options.ack_policy, info.config.ack_policy
-                    )));
+                        )));
                 }
 
                 if options.ack_wait.is_some() && options.ack_wait.unwrap() != info.config.ack_wait {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
-                        format!("configuration requests ack wait to be {:?}, but consumer's value is {:?}", options.ack_wait, info.config.ack_wait
-                    )));
+                        format!(
+                            "configuration requests ack wait to be {:?}, but consumer's value is {:?}",
+                            options.ack_wait, info.config.ack_wait
+                        ),
+                    ));
                 }
 
                 if options.max_deliver.is_some()
@@ -956,7 +1115,7 @@ impl JetStream {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
                         format!("configuration requests max deliver to be {:?}, but consumer's value is {:?}", options.max_deliver, info.config.max_deliver
-                    )));
+                        )));
                 }
 
                 if options.replay_policy.is_some()
@@ -965,7 +1124,7 @@ impl JetStream {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
                         format!("configuration requests replay policy to be {:?}, but consumer's value is {:?}", options.replay_policy, info.config.replay_policy
-                    )));
+                        )));
                 }
 
                 if options.rate_limit.is_some()
@@ -974,16 +1133,16 @@ impl JetStream {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
                         format!("configuration requests rate limit to be {:?}, but consumer's value is {:?}", options.rate_limit, info.config.rate_limit
-                    )));
+                        )));
                 }
 
                 if options.sample_frequency.is_some()
                     && options.sample_frequency.unwrap() != info.config.sample_frequency
                 {
                     return Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("configuration requests sample frequency to be {:?}, but consumer's value is {:?}", options.sample_frequency, info.config.sample_frequency
-                    )));
+                        io::ErrorKind::Other,
+                        format!("configuration requests sample frequency to be {:?}, but consumer's value is {:?}", options.sample_frequency, info.config.sample_frequency
+                        )));
                 }
 
                 if options.max_waiting.is_some()
@@ -992,7 +1151,7 @@ impl JetStream {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
                         format!("configuration requests max waiting to be {:?}, but consumer's value is {:?}", options.max_waiting, info.config.max_waiting
-                    )));
+                        )));
                 }
 
                 if options.max_ack_pending.is_some()
@@ -1001,7 +1160,7 @@ impl JetStream {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
                         format!("configuration requests max ack pending to be {:?}, but consumer's value is {:?}", options.max_ack_pending, info.config.max_ack_pending
-                    )));
+                        )));
                 }
 
                 // For flow control, we want to fail if the user explicit wanted it, but
@@ -1011,7 +1170,7 @@ impl JetStream {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
                         format!("configuration requests flow control to be {:?}, but consumer's value is {:?}", options.flow_control, info.config.flow_control
-                    )));
+                        )));
                 }
 
                 if options.idle_heartbeat.is_some()
@@ -1019,8 +1178,11 @@ impl JetStream {
                 {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
-                        format!("configuration requests heartbeat to be {:?}, but consumer's value is {:?}", options.idle_heartbeat, info.config.idle_heartbeat
-                    )));
+                        format!(
+                            "configuration requests heartbeat to be {:?}, but consumer's value is {:?}",
+                            options.idle_heartbeat, info.config.idle_heartbeat
+                        ),
+                    ));
                 }
             }
 
@@ -1028,9 +1190,10 @@ impl JetStream {
         };
 
         // Find the stream mapped to the subject if not bound to a stream already.
-        let stream_name = maybe_options
-            .and_then(|options| options.stream_name.to_owned())
-            .map_or_else(|| self.stream_name_by_subject(subject), Ok)?;
+        let stream_name = match maybe_options.and_then(|options| options.stream_name.to_owned()) {
+            Some(sub) => Ok(sub),
+            None => self.stream_name_by_subject(subject).await,
+        }?;
 
         // Figure out if we have a consumer name
         let maybe_durable_name = maybe_options
@@ -1046,6 +1209,7 @@ impl JetStream {
         let maybe_consumer_info = if let Some(consumer_name) = maybe_consumer_name {
             let consumer_info_result = self
                 .consumer_info(&stream_name, &consumer_name)
+                .await
                 .and_then(process_consumer_info);
 
             match consumer_info_result {
@@ -1138,126 +1302,11 @@ impl JetStream {
         // the subscription can be redirected as needed.
         let shared_sid = Arc::new(AtomicU64::new(0));
 
-        // Create our message preprocessor
-        let preprocessor = {
-            // Sequences for gap detection
-            let sequence_pair = Arc::new(Mutex::new(SequencePair {
-                consumer_seq: 0,
-                stream_seq: 0,
-            }));
-
-            let handle_sequence_mismatch = {
-                // Context used to send replies and make requests.
-                let context = self.clone();
-                let consumer_config = consumer_config.clone();
-                let sequence_pair = sequence_pair.clone();
-                let stream_name = stream_name.clone();
-                let shared_sid = shared_sid.clone();
-
-                move |sid: u64, start_seq: u64| {
-                    let stream_name = stream_name.clone();
-                    let context = context.clone();
-                    let consumer_config = consumer_config.clone();
-                    let sequence_pair = sequence_pair.clone();
-                    let shared_sid = shared_sid.clone();
-
-                    // Immediately mute the subscription so that messages no longer get delivered to it.
-                    //
-                    // If we are already muted then the triggering slipped through and we can
-                    // return early as a resubscription will already be on the way.
-                    if !context.connection.0.client.mute(sid).unwrap() {
-                        return true;
-                    }
-
-                    thread::spawn(move || {
-                        let new_deliver_subject = context.connection.new_inbox();
-                        let result = context
-                            .connection
-                            .0
-                            .client
-                            .resubscribe(sid, &new_deliver_subject);
-
-                        if let Ok(new_sid) = result {
-                            shared_sid.store(new_sid, Ordering::Relaxed);
-
-                            let mut consumer_config = consumer_config.clone();
-                            consumer_config.deliver_subject = Some(new_deliver_subject);
-                            consumer_config.deliver_policy = DeliverPolicy::ByStartSeq;
-                            consumer_config.opt_start_seq = Some(start_seq);
-                            context.add_consumer(stream_name, consumer_config).ok();
-                        }
-
-                        let mut sequence_info = sequence_pair.lock();
-                        sequence_info.consumer_seq = 0;
-                    });
-
-                    true
-                }
-            };
-
-            let context = self.clone();
-
-            move |sid: u64, message: &Message| {
-                if message.is_flow_control() {
-                    return false;
-                }
-
-                // Track and respond to idle heartbeats
-                if message.is_idle_heartbeat() {
-                    let maybe_consumer_stalled = message
-                        .headers
-                        .as_ref()
-                        .and_then(|headers| {
-                            headers
-                                .get(header::NATS_CONSUMER_STALLED)
-                                .map(|set| set.iter().cloned().next())
-                        })
-                        .flatten();
-
-                    if let Some(consumer_stalled) = maybe_consumer_stalled {
-                        context.connection.try_publish_with_reply_or_headers(
-                            &consumer_stalled,
-                            None,
-                            None,
-                            b"",
-                        );
-                    }
-
-                    let maybe_consumer_seq = message
-                        .headers
-                        .as_ref()
-                        .and_then(|headers| {
-                            headers
-                                .get(header::NATS_LAST_CONSUMER)
-                                .map(|set| set.iter().cloned().next())
-                        })
-                        .flatten();
-
-                    if let Some(consumer_seq) = maybe_consumer_seq {
-                        let consumer_seq = consumer_seq.parse::<u64>().unwrap();
-                        let sequence_info = sequence_pair.lock();
-                        if consumer_seq != sequence_info.consumer_seq {
-                            return handle_sequence_mismatch(sid, sequence_info.stream_seq + 1);
-                        }
-                    }
-
-                    return false;
-                }
-
-                // Track messages for sequence mismatches.
-                if let Some(message_info) = message.jetstream_message_info() {
-                    let mut sequence_info = sequence_pair.lock();
-                    if message_info.consumer_seq != sequence_info.consumer_seq + 1 {
-                        return handle_sequence_mismatch(sid, sequence_info.stream_seq + 1);
-                    }
-
-                    sequence_info.stream_seq = message_info.stream_seq;
-                    sequence_info.consumer_seq = message_info.consumer_seq;
-                }
-
-                false
-            }
-        };
+        // Sequences for gap detection
+        let sequence_pair = Arc::new(Mutex::new(SequencePair {
+            consumer_seq: 0,
+            stream_seq: 0,
+        }));
 
         // Figure out our deliver subject
         let deliver_subject = maybe_consumer_info
@@ -1271,22 +1320,34 @@ impl JetStream {
                 )
             })?;
 
+        let preprocessor = SubscriptionPreprocessor {
+            sequence_pair: sequence_pair.clone(),
+            context: self.clone(),
+            consumer_config: consumer_config.clone(),
+            stream_name: stream_name.clone(),
+            shared_sid: shared_sid.clone(),
+        };
         // Create a subscription with that subject.
-        let (mut sid, mut receiver) = self.connection.0.client.subscribe_with_preprocessor(
-            &deliver_subject,
-            maybe_queue,
-            Box::new(preprocessor.clone()),
-        )?;
+        let (mut sid, mut receiver) = self
+            .connection
+            .0
+            .client
+            .subscribe_with_preprocessor(
+                &deliver_subject,
+                maybe_queue,
+                Box::pin(preprocessor.clone()),
+            )
+            .await?;
 
         // If we don't have a consumer yet we try to create one here.
         // If that fails try to bind once before giving up.
         let (consumer_info, consumer_ownership) = match maybe_consumer_info {
             Some(consumer_info) => (consumer_info, ConsumerOwnership::No),
-            None => match self.add_consumer(&stream_name, &consumer_config) {
+            None => match self.add_consumer(&stream_name, &consumer_config).await {
                 Ok(consumer_info) => (consumer_info, ConsumerOwnership::Yes),
                 Err(err) => {
                     // We won't be using this subscription, remove it.
-                    self.connection.0.client.unsubscribe(sid)?;
+                    self.connection.0.client.unsubscribe(sid).await?;
 
                     // If this isn't a protocol error we can return without trying anything else.
                     if err.kind() != io::ErrorKind::Other {
@@ -1306,6 +1367,7 @@ impl JetStream {
 
                     let consumer_info = self
                         .consumer_info(&stream_name, &consumer_name)
+                        .await
                         .and_then(process_consumer_info)?;
 
                     let deliver_subject = consumer_info
@@ -1320,12 +1382,16 @@ impl JetStream {
                         })?;
 
                     // Create a new subscription with the new subject.
-                    let (new_sid, new_receiver) =
-                        self.connection.0.client.subscribe_with_preprocessor(
+                    let (new_sid, new_receiver) = self
+                        .connection
+                        .0
+                        .client
+                        .subscribe_with_preprocessor(
                             deliver_subject,
                             maybe_queue,
-                            Box::new(preprocessor),
-                        )?;
+                            Box::pin(preprocessor),
+                        )
+                        .await?;
 
                     sid = new_sid;
                     receiver = new_receiver;
@@ -1347,7 +1413,7 @@ impl JetStream {
     }
 
     /// Create a `JetStream` stream.
-    pub fn add_stream<S>(&self, stream_config: S) -> io::Result<StreamInfo>
+    pub async fn add_stream<S>(&self, stream_config: S) -> io::Result<StreamInfo>
     where
         StreamConfig: From<S>,
     {
@@ -1360,11 +1426,11 @@ impl JetStream {
         }
         let subject: String = format!("{}STREAM.CREATE.{}", self.api_prefix(), config.name);
         let req = serde_json::ser::to_vec(&config)?;
-        self.js_request(&subject, &req)
+        self.js_request(&subject, &req).await
     }
 
     /// Update a `JetStream` stream.
-    pub fn update_stream(&self, config: &StreamConfig) -> io::Result<StreamInfo> {
+    pub async fn update_stream(&self, config: &StreamConfig) -> io::Result<StreamInfo> {
         if config.name.is_empty() {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
@@ -1373,44 +1439,50 @@ impl JetStream {
         }
         let subject: String = format!("{}STREAM.UPDATE.{}", self.api_prefix(), config.name);
         let req = serde_json::ser::to_vec(&config)?;
-        self.js_request(&subject, &req)
+        self.js_request(&subject, &req).await
     }
 
     /// List all `JetStream` stream names. If you also want stream information,
     /// use the `list_streams` method instead.
-    pub fn stream_names(&self) -> PagedIterator<'_, String> {
-        PagedIterator {
+    pub fn stream_names(&self) -> impl Stream<Item = io::Result<String>> + '_ {
+        Box::pin(PagedIterator {
             subject: format!("{}STREAM.NAMES", self.api_prefix()),
             manager: self,
             offset: 0,
             items: Default::default(),
             done: false,
-        }
+        })
+        .to_stream()
     }
 
-    fn stream_name_by_subject(&self, subject: &str) -> io::Result<String> {
+    async fn stream_name_by_subject(&self, subject: &str) -> io::Result<String> {
         let req = serde_json::ser::to_vec(&StreamNamesRequest {
             subject: subject.to_string(),
         })?;
 
         let request_subject = format!("{}STREAM.NAMES", self.api_prefix());
         self.js_request::<StreamNamesResponse>(&request_subject, &req)
+            .await
             .map(|res| res.streams.first().unwrap().to_string())
     }
 
     /// List all `JetStream` streams.
-    pub fn list_streams(&self) -> PagedIterator<'_, StreamInfo> {
-        PagedIterator {
+    pub fn list_streams(&self) -> impl Stream<Item = io::Result<StreamInfo>> + '_ {
+        Box::pin(PagedIterator {
             subject: format!("{}STREAM.LIST", self.api_prefix()),
             manager: self,
             offset: 0,
             items: Default::default(),
             done: false,
-        }
+        })
+        .to_stream()
     }
 
     /// List `JetStream` consumers for a stream.
-    pub fn list_consumers<S>(&self, stream: S) -> io::Result<PagedIterator<'_, ConsumerInfo>>
+    pub fn list_consumers<S>(
+        &self,
+        stream: S,
+    ) -> io::Result<impl Stream<Item = io::Result<ConsumerInfo>> + '_>
     where
         S: AsRef<str>,
     {
@@ -1423,17 +1495,18 @@ impl JetStream {
         }
         let subject: String = format!("{}CONSUMER.LIST.{}", self.api_prefix(), stream);
 
-        Ok(PagedIterator {
+        Ok(Box::pin(PagedIterator {
             subject,
             manager: self,
             offset: 0,
             items: Default::default(),
             done: false,
         })
+        .to_stream())
     }
 
     /// Query `JetStream` stream information.
-    pub fn stream_info<S: AsRef<str>>(&self, stream: S) -> io::Result<StreamInfo> {
+    pub async fn stream_info<S: AsRef<str>>(&self, stream: S) -> io::Result<StreamInfo> {
         let stream: &str = stream.as_ref();
         if stream.is_empty() {
             return Err(io::Error::new(
@@ -1442,11 +1515,11 @@ impl JetStream {
             ));
         }
         let subject: String = format!("{}STREAM.INFO.{}", self.api_prefix(), stream);
-        self.js_request(&subject, b"")
+        self.js_request(&subject, b"").await
     }
 
     /// Purge `JetStream` stream messages.
-    pub fn purge_stream<S: AsRef<str>>(&self, stream: S) -> io::Result<PurgeResponse> {
+    pub async fn purge_stream<S: AsRef<str>>(&self, stream: S) -> io::Result<PurgeResponse> {
         let stream: &str = stream.as_ref();
         if stream.is_empty() {
             return Err(io::Error::new(
@@ -1455,11 +1528,11 @@ impl JetStream {
             ));
         }
         let subject = format!("{}STREAM.PURGE.{}", self.api_prefix(), stream);
-        self.js_request(&subject, b"")
+        self.js_request(&subject, b"").await
     }
 
     /// Purge stream messages matching a subject.
-    pub fn purge_stream_subject<S: AsRef<str>>(
+    pub async fn purge_stream_subject<S: AsRef<str>>(
         &self,
         stream: S,
         filter_subject: &str,
@@ -1478,11 +1551,15 @@ impl JetStream {
             ..Default::default()
         })?;
 
-        self.js_request(&subject, &request)
+        self.js_request(&subject, &request).await
     }
 
     /// Get a message from a stream.
-    pub fn get_message<S: AsRef<str>>(&self, stream: S, seq: u64) -> io::Result<StreamMessage> {
+    pub async fn get_message<S: AsRef<str>>(
+        &self,
+        stream: S,
+        seq: u64,
+    ) -> io::Result<StreamMessage> {
         let stream: &str = stream.as_ref();
         if stream.is_empty() {
             return Err(io::Error::new(
@@ -1499,6 +1576,7 @@ impl JetStream {
 
         let raw_message = self
             .js_request::<StreamMessageGetResponse>(&subject, &request)
+            .await
             .map(|response| response.message)?;
 
         let message = StreamMessage::try_from(raw_message)?;
@@ -1507,7 +1585,7 @@ impl JetStream {
     }
 
     /// Get the last message from a stream by subject
-    pub fn get_last_message<S: AsRef<str>>(
+    pub async fn get_last_message<S: AsRef<str>>(
         &self,
         stream_name: S,
         stream_subject: &str,
@@ -1528,6 +1606,7 @@ impl JetStream {
 
         let raw_message = self
             .js_request::<StreamMessageGetResponse>(&subject, &request)
+            .await
             .map(|response| response.message)?;
 
         let message = StreamMessage::try_from(raw_message)?;
@@ -1536,7 +1615,7 @@ impl JetStream {
     }
 
     /// Delete message in a `JetStream` stream.
-    pub fn delete_message<S: AsRef<str>>(
+    pub async fn delete_message<S: AsRef<str>>(
         &self,
         stream: S,
         sequence_number: u64,
@@ -1557,11 +1636,12 @@ impl JetStream {
         let subject = format!("{}STREAM.MSG.DELETE.{}", self.api_prefix(), stream);
 
         self.js_request::<DeleteResponse>(&subject, &req)
+            .await
             .map(|dr| dr.success)
     }
 
     /// Delete `JetStream` stream.
-    pub fn delete_stream<S: AsRef<str>>(&self, stream: S) -> io::Result<bool> {
+    pub async fn delete_stream<S: AsRef<str>>(&self, stream: S) -> io::Result<bool> {
         let stream: &str = stream.as_ref();
         if stream.is_empty() {
             return Err(io::Error::new(
@@ -1572,11 +1652,12 @@ impl JetStream {
 
         let subject = format!("{}STREAM.DELETE.{}", self.api_prefix(), stream);
         self.js_request::<DeleteResponse>(&subject, b"")
+            .await
             .map(|dr| dr.success)
     }
 
     /// Create a `JetStream` consumer.
-    pub fn add_consumer<S, C>(&self, stream: S, config: C) -> io::Result<ConsumerInfo>
+    pub async fn add_consumer<S, C>(&self, stream: S, config: C) -> io::Result<ConsumerInfo>
     where
         S: AsRef<str>,
         ConsumerConfig: From<C>,
@@ -1607,11 +1688,11 @@ impl JetStream {
         };
 
         let ser_req = serde_json::ser::to_vec(&req)?;
-        self.js_request(&subject, &ser_req)
+        self.js_request(&subject, &ser_req).await
     }
 
     /// Delete a `JetStream` consumer.
-    pub fn delete_consumer<S, C>(&self, stream: S, consumer: C) -> io::Result<bool>
+    pub async fn delete_consumer<S, C>(&self, stream: S, consumer: C) -> io::Result<bool>
     where
         S: AsRef<str>,
         C: AsRef<str>,
@@ -1639,11 +1720,12 @@ impl JetStream {
         );
 
         self.js_request::<DeleteResponse>(&subject, b"")
+            .await
             .map(|dr| dr.success)
     }
 
     /// Query `JetStream` consumer information.
-    pub fn consumer_info<S, C>(&self, stream: S, consumer: C) -> io::Result<ConsumerInfo>
+    pub async fn consumer_info<S, C>(&self, stream: S, consumer: C) -> io::Result<ConsumerInfo>
     where
         S: AsRef<str>,
         C: AsRef<str>,
@@ -1657,19 +1739,20 @@ impl JetStream {
         }
         let consumer: &str = consumer.as_ref();
         let subject: String = format!("{}CONSUMER.INFO.{}.{}", self.api_prefix(), stream, consumer);
-        self.js_request(&subject, b"")
+        self.js_request(&subject, b"").await
     }
 
     /// Query `JetStream` account information.
-    pub fn account_info(&self) -> io::Result<AccountInfo> {
+    pub async fn account_info(&self) -> io::Result<AccountInfo> {
         self.js_request(&format!("{}INFO", self.api_prefix()), b"")
+            .await
     }
 
-    fn js_request<Res>(&self, subject: &str, req: &[u8]) -> io::Result<Res>
+    async fn js_request<Res>(&self, subject: &str, req: &[u8]) -> io::Result<Res>
     where
         Res: DeserializeOwned,
     {
-        let res_msg = self.connection.request(subject, req)?;
+        let res_msg = self.connection.request(subject, req).await?;
         let res: ApiResponse<Res> = serde_json::de::from_slice(&res_msg.data)?;
         match res {
             ApiResponse::Ok(stream_info) => Ok(stream_info),

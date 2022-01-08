@@ -1,6 +1,25 @@
-use nats;
+use nats::{AsyncCall, BoxFuture};
 use quicli::prelude::*;
 use structopt::{clap::ArgGroup, StructOpt};
+
+struct PrintCallback {
+    msg: String,
+}
+impl PrintCallback {
+    fn new(msg: &str) -> Self {
+        Self {
+            msg: msg.to_string(),
+        }
+    }
+}
+impl AsyncCall for PrintCallback {
+    fn call(&self) -> BoxFuture<()> {
+        let msg = self.msg.clone();
+        Box::pin(async move {
+            println!("{}", msg);
+        })
+    }
+}
 
 /// NATS utility that can perform basic publish, subscribe, request and reply
 /// functions.
@@ -9,7 +28,7 @@ use structopt::{clap::ArgGroup, StructOpt};
 struct Cli {
     /// NATS server
     #[structopt(long, short, default_value = "demo.nats.io")]
-    server: String,
+    server: nats::ServerAddress,
 
     /// User Credentials File
     #[structopt(long = "creds", group = "auth")]
@@ -36,7 +55,8 @@ enum Command {
     Reply { subject: String, resp: String },
 }
 
-fn main() -> CliResult {
+#[tokio::main]
+async fn main() -> CliResult {
     let args = Cli::from_args();
 
     let opts = if let Some(creds_path) = args.creds {
@@ -49,33 +69,34 @@ fn main() -> CliResult {
 
     let nc = opts
         .with_name("nats-box rust example")
-        .disconnect_callback(|| println!("Disconnected"))
-        .reconnect_callback(|| println!("Reconnected"))
-        .connect(&args.server)?;
+        .disconnect_callback(PrintCallback::new("Disconnected"))
+        .reconnect_callback(PrintCallback::new("Reconnected"))
+        .connect(args.server)
+        .await?;
 
     match args.cmd {
         Command::Pub { subject, msg } => {
-            nc.publish(&subject, &msg)?;
+            nc.publish(&subject, &msg).await?;
             println!("Published to '{}': '{}'", subject, msg);
         }
         Command::Sub { subject } => {
-            let sub = nc.subscribe(&subject)?;
+            let sub = nc.subscribe(&subject).await?;
             println!("Listening on '{}'", subject);
-            for msg in sub.messages() {
+            while let Some(msg) = sub.next().await {
                 println!("Received a {:?}", msg);
             }
         }
         Command::Request { subject, msg } => {
             println!("Waiting on response for '{}'", subject);
-            let resp = nc.request(&subject, &msg)?;
+            let resp = nc.request(&subject, &msg).await?;
             println!("Response is {:?}", resp);
         }
         Command::Reply { subject, resp } => {
-            let sub = nc.queue_subscribe(&subject, "rust-box")?;
+            let sub = nc.queue_subscribe(&subject, "rust-box").await?;
             println!("Listening for requests on '{}'", subject);
-            for msg in sub.messages() {
+            while let Some(msg) = sub.next().await {
                 println!("Received a request {:?}", msg);
-                msg.respond(&resp)?;
+                msg.respond(&resp).await?;
             }
         }
     }

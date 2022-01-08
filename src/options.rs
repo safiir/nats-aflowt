@@ -1,4 +1,4 @@
-// Copyright 2020-2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -21,9 +21,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::auth_utils;
+use crate::rustls::WantsCipherSuites;
 use crate::secure_wipe::SecureString;
-use crate::Client;
+use crate::BoxFuture;
 use crate::Connection;
+use crate::IntoServerList;
 
 /// Connect options.
 pub struct Options {
@@ -36,12 +38,14 @@ pub struct Options {
     pub(crate) certificates: Vec<PathBuf>,
     pub(crate) client_cert: Option<PathBuf>,
     pub(crate) client_key: Option<PathBuf>,
-    pub(crate) tls_client_config: crate::rustls::ClientConfig,
+    pub(crate) tls_client_config:
+        crate::rustls::ConfigBuilder<crate::rustls::ClientConfig, WantsCipherSuites>,
 
     pub(crate) error_callback: ErrorCallback,
     pub(crate) disconnect_callback: Callback,
     pub(crate) reconnect_callback: Callback,
     pub(crate) reconnect_delay_callback: ReconnectDelayCallback,
+    // synchronous callback after connection is closed
     pub(crate) close_callback: Callback,
     pub(crate) lame_duck_callback: Callback,
 }
@@ -84,16 +88,25 @@ impl Default for Options {
             error_callback: ErrorCallback(None),
             disconnect_callback: Callback(None),
             reconnect_callback: Callback(None),
-            reconnect_delay_callback: ReconnectDelayCallback(Box::new(backoff)),
+            reconnect_delay_callback: ReconnectDelayCallback(Some(Box::new(Backoff::default()))),
             close_callback: Callback(None),
             lame_duck_callback: Callback(None),
-            tls_client_config: crate::rustls::ClientConfig::default(),
+            tls_client_config: crate::rustls::ClientConfig::builder(),
         }
     }
 }
 
+#[derive(Default)]
+struct Backoff {}
+impl AsyncCallRet<usize, Duration> for Backoff {
+    /// Perform async callback action
+    fn call(&self, reconnects: usize) -> BoxFuture<'static, Duration> {
+        Box::pin(backoff(reconnects))
+    }
+}
+
 /// Calculates how long to sleep for before connecting to a server.
-pub(crate) fn backoff(reconnects: usize) -> Duration {
+pub(crate) async fn backoff(reconnects: usize) -> Duration {
     // Exponential backoff: 0ms, 1ms, 2ms, 4ms, 8ms, 16ms, ..., 4sec
     let base = if reconnects == 0 {
         Duration::from_millis(0)
@@ -125,10 +138,11 @@ impl Options {
     /// `Options` for establishing a new NATS `Connection`.
     ///
     /// # Example
-    /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
+    /// ```
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let options = nats::Options::new();
-    /// let nc = options.connect("demo.nats.io")?;
+    /// let nc = options.connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -140,9 +154,10 @@ impl Options {
     ///
     /// # Example
     /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::with_token("t0k3n!")
-    ///     .connect("demo.nats.io")?;
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -157,9 +172,10 @@ impl Options {
     ///
     /// # Example
     /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::with_user_pass("derek", "s3cr3t!")
-    ///     .connect("demo.nats.io")?;
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -178,9 +194,10 @@ impl Options {
     ///
     /// # Example
     /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::with_credentials("path/to/my.creds")
-    ///     .connect("connect.ngs.global")?;
+    ///     .connect("connect.ngs.global").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -215,7 +232,8 @@ impl Options {
     ///
     /// # Example
     /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let creds =
     /// "-----BEGIN NATS USER JWT-----
     /// eyJ0eXAiOiJqd3QiLCJhbGciOiJlZDI1NTE5...
@@ -232,7 +250,7 @@ impl Options {
     ///
     /// let nc = nats::Options::with_static_credentials(creds)
     ///     .expect("failed to parse static creds")
-    ///     .connect("connect.ngs.global")?;
+    ///     .connect("connect.ngs.global").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -252,6 +270,8 @@ impl Options {
     ///
     /// # Example
     /// ```no_run
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let seed = "SUANQDPB2RUOE4ETUA26CNX7FUKE5ZZKFCQIIW63OX225F2CO7UEXTM7ZY";
     /// let kp = nkeys::KeyPair::from_seed(seed).unwrap();
     ///
@@ -260,8 +280,8 @@ impl Options {
     /// }
     ///
     /// let nc = nats::Options::with_jwt(load_jwt, move |nonce| kp.sign(nonce).unwrap())
-    ///     .connect("localhost")?;
-    /// # std::io::Result::Ok(())
+    ///     .connect("localhost").await?;
+    /// # std::io::Result::Ok(()) }
     /// ```
     pub fn with_jwt<J, S>(jwt_cb: J, sig_cb: S) -> Options
     where
@@ -281,13 +301,15 @@ impl Options {
     ///
     /// # Example
     /// ```no_run
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nkey = "UAMMBNV2EYR65NYZZ7IAK5SIR5ODNTTERJOBOF4KJLMWI45YOXOSWULM";
     /// let seed = "SUANQDPB2RUOE4ETUA26CNX7FUKE5ZZKFCQIIW63OX225F2CO7UEXTM7ZY";
     /// let kp = nkeys::KeyPair::from_seed(seed).unwrap();
     ///
     /// let nc = nats::Options::with_nkey(nkey, move |nonce| kp.sign(nonce).unwrap())
-    ///     .connect("localhost")?;
-    /// # std::io::Result::Ok(())
+    ///     .connect("localhost").await?;
+    /// # std::io::Result::Ok(()) }
     /// ```
     pub fn with_nkey<F>(nkey: &str, sig_cb: F) -> Options
     where
@@ -312,64 +334,70 @@ impl Options {
     ///
     /// # Example
     /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .client_cert("client-cert.pem", "client-key.pem")
-    ///     .connect("nats://localhost:4443")?;
+    ///     .connect("nats://localhost:4443").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn client_cert(mut self, cert: impl AsRef<Path>, key: impl AsRef<Path>) -> Options {
         self.client_cert = Some(cert.as_ref().to_owned());
         self.client_key = Some(key.as_ref().to_owned());
         self
     }
 
-    /// Set the default TLS config that will be used
-    /// for connections. Note that this is less secure
-    /// than specifying TLS certificate file paths
-    /// using the other methods on `Options`, which
-    /// will avoid keeping raw key material in-memory
-    /// and will zero memory buffers that temporarily
-    /// contain key material during connection attempts.
-    /// This is intended to be used as a method of
-    /// last-resort when providing well-known file
-    /// paths is not feasible.
-    ///
-    /// To avoid version conflicts, the `rustls` version
-    /// used by this crate is exported as `nats::rustls`.
-    ///
-    /// # Example
-    /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
-    /// let mut tls_client_config = nats::rustls::ClientConfig::default();
-    /// tls_client_config
-    ///     .set_single_client_cert(
-    ///         vec![nats::rustls::Certificate(b"MY_CERT".to_vec())],
-    ///         nats::rustls::PrivateKey(b"MY_KEY".to_vec()),
-    ///     );
-    /// let nc = nats::Options::new()
-    ///     .tls_client_config(tls_client_config)
-    ///     .connect("nats://localhost:4443")?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn tls_client_config(mut self, tls_client_config: crate::rustls::ClientConfig) -> Options {
-        self.tls_client_config = tls_client_config;
-        self
-    }
+    /*
+       /// Set the default TLS config that will be used
+       /// for connections. Note that this is less secure
+       /// than specifying TLS certificate file paths
+       /// using the other methods on `Options`, which
+       /// will avoid keeping raw key material in-memory
+       /// and will zero memory buffers that temporarily
+       /// contain key material during connection attempts.
+       /// This is intended to be used as a method of
+       /// last-resort when providing well-known file
+       /// paths is not feasible.
+       ///
+       /// To avoid version conflicts, the `rustls` version
+       /// used by this crate is exported as `nats::rustls`.
+       ///
+       /// # Example
+       /// ```no_run
+       /// # fn main() -> std::io::Result<()> {
+       /// let mut tls_client_config = nats::rustls::ClientConfig::default();
+       /// tls_client_config
+       ///     .set_single_client_cert(
+       ///         vec![nats::rustls::Certificate(b"MY_CERT".to_vec())],
+       ///         nats::rustls::PrivateKey(b"MY_KEY".to_vec()),
+       ///     );
+       /// let nc = nats::Options::new()
+       ///     .tls_client_config(tls_client_config)
+       ///     .connect("nats://localhost:4443")?;
+       /// # Ok(())
+       /// # }
+       /// ```
+       pub fn tls_client_config(mut self, tls_client_config: crate::rustls::ClientConfig) -> Options {
+           self.tls_client_config = tls_client_config;
+           self
+       }
+    */
 
     /// Add a name option to this configuration.
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .with_name("My App")
-    ///     .connect("demo.nats.io")?;
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn with_name(mut self, name: &str) -> Options {
         self.name = Some(name.to_string());
         self
@@ -379,13 +407,15 @@ impl Options {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .no_echo()
-    ///     .connect("demo.nats.io")?;
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn no_echo(mut self) -> Options {
         self.no_echo = true;
         self
@@ -400,13 +430,15 @@ impl Options {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .max_reconnects(3)
-    ///     .connect("demo.nats.io")?;
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn max_reconnects<T: Into<Option<usize>>>(mut self, max_reconnects: T) -> Options {
         self.max_reconnects = max_reconnects.into();
         self
@@ -420,13 +452,15 @@ impl Options {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .reconnect_buffer_size(64 * 1024)
-    ///     .connect("demo.nats.io")?;
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn reconnect_buffer_size(mut self, reconnect_buffer_size: usize) -> Options {
         self.reconnect_buffer_size = reconnect_buffer_size;
         self
@@ -440,9 +474,10 @@ impl Options {
     /// # Example
     ///
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let options = nats::Options::new();
-    /// let nc = options.connect("demo.nats.io")?;
+    /// let nc = options.connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -455,14 +490,18 @@ impl Options {
     ///
     ///
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let options = nats::Options::new();
-    /// let nc = options.connect("nats://demo.nats.io:4222,tls://demo.nats.io:4443")?;
+    /// let nc = options.connect("nats://demo.nats.io:4222,tls://demo.nats.io:4443").await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn connect(self, nats_url: &str) -> io::Result<Connection> {
-        Connection::connect_with_options(nats_url, self)
+    pub async fn connect<I>(self, nats_url: I) -> io::Result<Connection>
+    where
+        I: IntoServerList,
+    {
+        Connection::connect_with_options(nats_url, self).await
     }
 
     /// Set a callback to be executed when an async error from
@@ -471,16 +510,26 @@ impl Options {
     /// # Example
     ///
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// struct ErrCallback {}
+    /// impl nats::AsyncErrorCallback for ErrCallback {
+    ///     fn call(&self, si: nats::ServerInfo, err: std::io::Error) -> nats::BoxFuture<()> {
+    ///         Box::pin(async move {
+    ///             eprintln!("{} on connection {}", err, si.server_id);
+    ///         })
+    ///     }
+    /// }
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
-    ///     .error_callback(|err| println!("connection received an error: {}", err))
-    ///     .connect("demo.nats.io")?;
+    ///     .error_callback(ErrCallback{})
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn error_callback<F>(mut self, cb: F) -> Self
     where
-        F: Fn(Error) + Send + Sync + 'static,
+        F: 'static + AsyncErrorCallback,
     {
         self.error_callback = ErrorCallback(Some(Box::new(cb)));
         self
@@ -492,16 +541,29 @@ impl Options {
     /// # Example
     ///
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// struct PrintCallback{
+    ///     msg: String,
+    /// }
+    /// impl nats::AsyncCall for PrintCallback {
+    ///     fn call(&self) -> nats::BoxFuture<()> {
+    ///         let msg = self.msg.clone();
+    ///         Box::pin(async move {
+    ///              println!("{}", self.msg);
+    ///         })
+    ///     }
+    /// }
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
-    ///     .disconnect_callback(|| println!("connection has been lost"))
-    ///     .connect("demo.nats.io")?;
+    ///     .disconnect_callback(PrintCallback{msg: "connection has been lost".to_string()})
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn disconnect_callback<F>(mut self, cb: F) -> Self
     where
-        F: Fn() + Send + Sync + 'static,
+        F: 'static + AsyncCall,
     {
         self.disconnect_callback = Callback(Some(Box::new(cb)));
         self
@@ -513,16 +575,29 @@ impl Options {
     /// # Example
     ///
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// struct PrintCallback{
+    ///     msg: String,
+    /// }
+    /// impl nats::AsyncCall for PrintCallback {
+    ///     fn call(&self) -> nats::BoxFuture<()> {
+    ///         let msg = self.msg.clone();
+    ///         Box::pin(async move {
+    ///              println!("{}", self.msg);
+    ///         })
+    ///     }
+    /// }
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
-    ///     .reconnect_callback(|| println!("connection has been reestablished"))
-    ///     .connect("demo.nats.io")?;
+    ///     .reconnect_callback(PrintCallback{msg: "connection has been reestablished".to_string()})
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn reconnect_callback<F>(mut self, cb: F) -> Self
     where
-        F: Fn() + Send + Sync + 'static,
+        F: 'static + AsyncCall,
     {
         self.reconnect_callback = Callback(Some(Box::new(cb)));
         self
@@ -535,17 +610,30 @@ impl Options {
     /// # Example
     ///
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// struct PrintCallback{
+    ///     msg: String,
+    /// }
+    /// impl nats::AsyncCall for PrintCallback {
+    ///     fn call(&self) -> nats::BoxFuture<()> {
+    ///         let msg = self.msg.clone();
+    ///         Box::pin(async move {
+    ///              println!("{}", self.msg);
+    ///         })
+    ///     }
+    /// }
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
-    ///     .close_callback(|| println!("connection has been closed"))
-    ///     .connect("demo.nats.io")?;
-    /// nc.drain().unwrap();
+    ///     .close_callback(PrintCallback{msg:"connection has been closed".to_string()})
+    ///     .connect("demo.nats.io").await?;
+    /// nc.drain().await.unwrap();
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn close_callback<F>(mut self, cb: F) -> Self
     where
-        F: Fn() + Send + Sync + 'static,
+        F: 'static + AsyncCall,
     {
         self.close_callback = Callback(Some(Box::new(cb)));
         self
@@ -557,17 +645,30 @@ impl Options {
     /// # Example
     ///
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// struct PrintCallback{
+    ///     msg: String,
+    /// }
+    /// impl nats::AsyncCall for PrintCallback {
+    ///     fn call(&self) -> nats::BoxFuture<()> {
+    ///         let msg = self.msg.clone();
+    ///         Box::pin(async move {
+    ///              println!("{}", self.msg);
+    ///         })
+    ///     }
+    /// }
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
-    ///     .lame_duck_callback(|| println!("server entered lame duck mode"))
-    ///     .connect("demo.nats.io")?;
-    /// nc.drain().unwrap();
+    ///     .lame_duck_callback(PrintCallback{msg:"server entered lame duck mode".to_string()})
+    ///     .connect("demo.nats.io").await?;
+    /// nc.drain().await.unwrap();
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn lame_duck_callback<F>(mut self, cb: F) -> Self
     where
-        F: Fn() + Send + Sync + 'static,
+        F: 'static + AsyncCall,
     {
         self.lame_duck_callback = Callback(Some(Box::new(cb)));
         self
@@ -586,19 +687,30 @@ impl Options {
     /// # Example
     ///
     /// ```
-    /// # fn main() -> std::io::Result<()> {
+    /// use std::time::Duration;
+    /// struct Backoff {}
+    /// impl nats::AsyncCallRet<usize, Duration> for Backoff {
+    ///     fn call(&self, reconnects: usize) -> nats::BoxFuture<Duration> {
+    ///         Box::pin(
+    ///             async move { Duration::from_millis(std::cmp::min((reconnects*100) as u64, 8000)) }
+    ///         )
+    ///     }
+    /// }
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// # use std::time::Duration;
     /// let nc = nats::Options::new()
-    ///     .reconnect_delay_callback(|c| Duration::from_millis(std::cmp::min((c * 100) as u64, 8000)))
-    ///     .connect("demo.nats.io")?;
+    ///     .reconnect_delay_callback(Backoff{})
+    ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn reconnect_delay_callback<F>(mut self, cb: F) -> Self
     where
-        F: Fn(usize) -> Duration + Send + Sync + 'static,
+        F: AsyncCallRet<usize, std::time::Duration> + Send + Sync + 'static,
     {
-        self.reconnect_delay_callback = ReconnectDelayCallback(Box::new(cb));
+        self.reconnect_delay_callback = ReconnectDelayCallback(Some(Box::new(cb)));
         self
     }
 
@@ -609,15 +721,16 @@ impl Options {
     /// with `tls://host:port` instead of `nats://host:port`.
     ///
     /// # Examples
-    /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
-    ///
+    /// ```
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .tls_required(true)
-    ///     .connect("tls://demo.nats.io:4443")?;
+    ///     .connect("tls://demo.nats.io:4443").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn tls_required(mut self, tls_required: bool) -> Options {
         self.tls_required = tls_required;
         self
@@ -629,14 +742,15 @@ impl Options {
     ///
     /// # Examples
     /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
-    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats::Options::new()
     ///     .add_root_certificate("my-certs.pem")
-    ///     .connect("tls://demo.nats.io:4443")?;
+    ///     .connect("tls://demo.nats.io:4443").await?;
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn add_root_certificate(mut self, path: impl AsRef<Path>) -> Options {
         self.certificates.push(path.as_ref().to_owned());
         self
@@ -691,12 +805,19 @@ impl Default for AuthStyle {
     }
 }
 
+/// Trait for async callback (no param & no results)
+pub trait AsyncCall: Send + Sync {
+    /// Perform async callback action
+    fn call(&self) -> BoxFuture<'_, ()>;
+}
+
 #[derive(Default)]
-pub(crate) struct Callback(Option<Box<dyn Fn() + Send + Sync + 'static>>);
+pub(crate) struct Callback(Option<Box<dyn AsyncCall>>);
 impl Callback {
-    pub fn call(&self) {
+    /// Perform async callback action
+    pub async fn call(&self) {
         if let Some(callback) = self.0.as_ref() {
-            callback();
+            callback.call().await;
         }
     }
 }
@@ -712,20 +833,37 @@ impl fmt::Debug for Callback {
     }
 }
 
-pub(crate) struct ReconnectDelayCallback(Box<dyn Fn(usize) -> Duration + Send + Sync + 'static>);
+/// Trait for async callbacks with single arg and return type
+pub trait AsyncCallRet<Arg, Ret>: Send + Sync {
+    /// Perform async callback action
+    fn call(&self, arg: Arg) -> BoxFuture<'_, Ret>;
+}
+
+pub(crate) struct ReconnectDelayCallback(Option<Box<dyn AsyncCallRet<usize, Duration>>>);
 impl ReconnectDelayCallback {
-    pub fn call(&self, reconnects: usize) -> Duration {
-        self.0(reconnects)
+    pub async fn call(&self, reconnects: usize) -> Option<Duration> {
+        if let Some(callback) = self.0.as_ref() {
+            Some(callback.call(reconnects).await)
+        } else {
+            None
+        }
     }
 }
 
-pub(crate) struct ErrorCallback(Option<Box<dyn Fn(Error) + Send + Sync + 'static>>);
+/// Trait for async error handler callback
+// NB(ss): the original api pass (&Client,&Error) but Client is not exported from the nats crate,
+// so I changed the interface to accept ServerInfo
+pub trait AsyncErrorCallback: Send + Sync {
+    /// Perform async callback action
+    fn call(&self, si: crate::ServerInfo, err: Error) -> BoxFuture<'_, ()>;
+}
+
+pub(crate) struct ErrorCallback(Option<Box<dyn AsyncErrorCallback>>);
 impl ErrorCallback {
-    pub fn call(&self, client: &Client, err: Error) {
+    pub async fn call(&self, si: crate::ServerInfo, err: Error) {
         if let Some(callback) = self.0.as_ref() {
-            callback(err);
+            callback.call(si, err).await
         } else {
-            let si = client.server_info();
             eprintln!("{} on connection [{}]", err, si.client_id);
         }
     }

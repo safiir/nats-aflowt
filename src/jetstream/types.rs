@@ -1,4 +1,4 @@
-// Copyright 2020-2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -11,12 +11,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::time::Duration;
-
 use crate::header::HeaderMap;
 use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
 use std::io;
+use std::time::Duration;
 
 /// A UTC time
 pub type DateTime = chrono::DateTime<chrono::Utc>;
@@ -602,6 +601,7 @@ pub struct PublishAck {
 
 /// The kinds of response used for acknowledging a processed message.
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub enum AckKind {
     /// Acknowledges a message was completely handled.
     Ack,
@@ -776,18 +776,21 @@ impl SubscribeOptions {
     }
 
     /// Sets the description used for the created consumer.
+    #[must_use]
     pub fn description(mut self, description: String) -> Self {
         self.description = Some(description);
         self
     }
 
     /// Sets the durable name for the created consumer.
+    #[must_use]
     pub fn durable_name(mut self, consumer: String) -> Self {
         self.durable_name = Some(consumer);
         self
     }
 
     /// Configures the consumer to receive all the messages from a Stream.
+    #[must_use]
     pub fn deliver_all(mut self) -> Self {
         self.deliver_policy = Some(DeliverPolicy::All);
         self
@@ -795,6 +798,7 @@ impl SubscribeOptions {
 
     /// Configures the consumer to receive messages
     /// starting with the latest one.
+    #[must_use]
     pub fn deliver_last(mut self) -> Self {
         self.deliver_policy = Some(DeliverPolicy::Last);
         self
@@ -802,6 +806,7 @@ impl SubscribeOptions {
 
     /// Configures the consumer to receive messages
     /// starting with the latest one for each filtered subject.
+    #[must_use]
     pub fn deliver_last_per_subject(mut self) -> Self {
         self.deliver_policy = Some(DeliverPolicy::LastPerSubject);
         self
@@ -809,6 +814,7 @@ impl SubscribeOptions {
 
     /// Configures the consumer to receive messages
     /// published after the subscription.
+    #[must_use]
     pub fn deliver_new(mut self) -> Self {
         self.deliver_policy = Some(DeliverPolicy::New);
         self
@@ -816,6 +822,7 @@ impl SubscribeOptions {
 
     /// Configures a Consumer to receive
     /// messages from a start sequence.
+    #[must_use]
     pub fn deliver_by_start_sequence(mut self, seq: u64) -> Self {
         self.deliver_policy = Some(DeliverPolicy::ByStartSeq);
         self.opt_start_seq = Some(seq);
@@ -824,6 +831,7 @@ impl SubscribeOptions {
 
     /// Configures the consumer to receive
     /// messages from a start time.
+    #[must_use]
     pub fn deliver_by_start_time(mut self, time: DateTime) -> Self {
         self.deliver_policy = Some(DeliverPolicy::ByStartTime);
         self.opt_start_time = Some(time);
@@ -832,6 +840,7 @@ impl SubscribeOptions {
     }
 
     /// Require no acks for delivered messages.
+    #[must_use]
     pub fn ack_none(mut self) -> Self {
         self.ack_policy = Some(AckPolicy::None);
         self
@@ -839,18 +848,21 @@ impl SubscribeOptions {
 
     /// When acking a sequence number, this implicitly acks all sequences
     /// below this one as well.
+    #[must_use]
     pub fn ack_all(mut self) -> Self {
         self.ack_policy = Some(AckPolicy::All);
         self
     }
 
     /// Requires ack or nack for all messages.
+    #[must_use]
     pub fn ack_explicit(mut self) -> Self {
         self.ack_policy = Some(AckPolicy::Explicit);
         self
     }
 
     /// Sets the number of redeliveries for a message.
+    #[must_use]
     pub fn max_deliver(mut self, n: i64) -> Self {
         self.max_deliver = Some(n);
         self
@@ -858,24 +870,28 @@ impl SubscribeOptions {
 
     /// Sets the number of outstanding acks that are allowed before
     /// message delivery is halted.
+    #[must_use]
     pub fn max_ack_pending(mut self, n: i64) -> Self {
         self.max_ack_pending = Some(n);
         self
     }
 
     /// Replays the messages at the original speed.
+    #[must_use]
     pub fn replay_original(mut self) -> Self {
         self.replay_policy = Some(ReplayPolicy::Original);
         self
     }
 
     /// Replays the messages as fast as possible.
+    #[must_use]
     pub fn replay_instant(mut self) -> Self {
         self.replay_policy = Some(ReplayPolicy::Instant);
         self
     }
 
     /// The bits per second rate limit applied to the push consumer.
+    #[must_use]
     pub fn rate_limit(mut self, n: u64) -> Self {
         self.rate_limit = Some(n);
         self
@@ -886,18 +902,21 @@ impl SubscribeOptions {
     /// and a creation request is sent to the server.
     ///
     /// If not provided, an inbox will be selected.
+    #[must_use]
     pub fn deliver_subject(mut self, subject: String) -> Self {
         self.deliver_subject = Some(subject);
         self
     }
 
     /// Instruct the consumer to only deliver headers and no payloads.
+    #[must_use]
     pub fn headers_only(mut self) -> Self {
         self.headers_only = Some(true);
         self
     }
 
     /// Enables flow control
+    #[must_use]
     pub fn enable_flow_control(mut self) -> Self {
         self.flow_control = Some(true);
         self
@@ -905,6 +924,7 @@ impl SubscribeOptions {
 
     /// Enables hearbeat messages to be sent.
     #[allow(clippy::cast_possible_truncation)]
+    #[must_use]
     pub fn idle_heartbeat(mut self, interval: Duration) -> Self {
         self.idle_heartbeat = Some(interval);
         self

@@ -1,4 +1,4 @@
-// Copyright 2020-2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -34,62 +34,63 @@
 //! be correct.
 //!
 //! ```no_run
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let nc = nats::connect("demo.nats.io")?;
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let nc = nats::connect("demo.nats.io").await?;
 //!
 //! let nc2 = nats::Options::with_user_pass("derek", "s3cr3t!")
 //!     .with_name("My Rust NATS App")
-//!     .connect("127.0.0.1")?;
+//!     .connect("127.0.0.1").await?;
 //!
 //! let nc3 = nats::Options::with_credentials("path/to/my.creds")
-//!     .connect("connect.ngs.global")?;
+//!     .connect("connect.ngs.global").await?;
 //!
 //! let nc4 = nats::Options::new()
 //!     .add_root_certificate("my-certs.pem")
-//!     .connect("tls://demo.nats.io:4443")?;
+//!     .connect("tls://demo.nats.io:4443").await?;
 //! # Ok(()) }
 //! ```
 //!
 //! ### Publish
 //!
 //! ```
-//! # fn main() -> std::io::Result<()> {
-//! let nc = nats::connect("demo.nats.io")?;
-//! nc.publish("my.subject", "Hello World!")?;
+//! # #[tokio::main]
+//! # async fn main() -> std::io::Result<()> {
+//! let nc = nats::connect("demo.nats.io").await?;
+//! nc.publish("my.subject", "Hello World!").await?;
 //!
-//! nc.publish("my.subject", "my message")?;
+//! nc.publish("my.subject", "my message").await?;
 //!
 //! // Publish a request manually.
 //! let reply = nc.new_inbox();
-//! let rsub = nc.subscribe(&reply)?;
-//! nc.publish_request("my.subject", &reply, "Help me!")?;
+//! let rsub = nc.subscribe(&reply).await?;
+//! nc.publish_request("my.subject", &reply, "Help me!").await?;
 //! # Ok(()) }
 //! ```
 //!
 //! ### Subscribe
 //!
 //! ```no_run
-//! # fn main() -> std::io::Result<()> {
+//! # use futures::stream::StreamExt;
+//! # #[tokio::main]
+//! # async fn main() -> std::io::Result<()> {
 //! # use std::time::Duration;
-//! let nc = nats::connect("demo.nats.io")?;
-//! let sub = nc.subscribe("foo")?;
-//! for msg in sub.messages() {}
+//! let nc = nats::connect("demo.nats.io").await?;
+//! let mut sub = nc.subscribe("foo").await?.stream();
 //!
-//! // Using next.
-//! if let Some(msg) = sub.next() {}
+//! // use as Stream
+//! while let Some(msg) = sub.next().await {
+//!     /* ... */
+//! }
 //!
-//! // Other iterators.
-//! for msg in sub.try_iter() {}
-//! for msg in sub.timeout_iter(Duration::from_secs(10)) {}
-//!
-//! // Using a threaded handler.
-//! let sub = nc.subscribe("bar")?.with_handler(move |msg| {
+//! // Using a blocking handler.
+//! let sub = nc.subscribe("bar").await?.with_handler(move |msg| {
 //!     println!("Received {}", &msg);
 //!     Ok(())
 //! });
 //!
 //! // Queue subscription.
-//! let qsub = nc.queue_subscribe("foo", "my_group")?;
+//! let qsub = nc.queue_subscribe("foo", "my_group").await?;
 //! # Ok(()) }
 //! ```
 //!
@@ -97,21 +98,24 @@
 //!
 //! ```no_run
 //! # use std::time::Duration;
-//! # fn main() -> std::io::Result<()> {
-//! let nc = nats::connect("demo.nats.io")?;
-//! let resp = nc.request("foo", "Help me?")?;
+//! # use futures::stream::StreamExt;
+//! # #[tokio::main]
+//! # async fn main() -> std::io::Result<()> {
+//! let nc = nats::connect("demo.nats.io").await?;
+//! let resp = nc.request("foo", "Help me?").await?;
 //!
 //! // With a timeout.
-//! let resp = nc.request_timeout("foo", "Help me?", Duration::from_secs(2))?;
+//! let resp = nc.request_timeout("foo", "Help me?", Duration::from_secs(2)).await?;
 //!
 //! // With multiple responses.
-//! for msg in nc.request_multi("foo", "Help")?.iter() {}
+//! let mut stream = nc.request_multi("foo", "Help").await?.stream();
+//! while let Some(msg) = stream.next().await { }
 //!
 //! // Publish a request manually.
 //! let reply = nc.new_inbox();
-//! let rsub = nc.subscribe(&reply)?;
-//! nc.publish_request("foo", &reply, "Help me!")?;
-//! let response = rsub.iter().take(1);
+//! let rsub = nc.subscribe(&reply).await?;
+//! nc.publish_request("foo", &reply, "Help me!").await?;
+//! let response = rsub.stream().take(1);
 //! # Ok(()) }
 //! ```
 
@@ -129,7 +133,6 @@
         trivial_numeric_casts,
         unsafe_code,
         unused,
-        unused_qualifications
     )
 )]
 #![cfg_attr(feature = "fault_injection", deny(
@@ -192,14 +195,11 @@
 )]
 
 /// Async-enabled NATS client.
-pub mod asynk;
-
+//pub mod _asynk;
 mod auth_utils;
 mod client;
 mod connect;
 mod connector;
-mod jetstream_push_subscription;
-mod jetstream_types;
 mod message;
 mod options;
 mod proto;
@@ -208,6 +208,10 @@ mod subscription;
 
 /// Header constants and types.
 pub mod header;
+
+pub use futures::future::BoxFuture;
+/// Stream, as used by this crate. re-export of `futures::Stream`
+pub use futures::Stream;
 
 /// `JetStream` stream management and consumers.
 pub mod jetstream;
@@ -225,7 +229,7 @@ mod fault_injection;
 use fault_injection::{inject_delay, inject_io_failure};
 
 #[cfg(not(feature = "fault_injection"))]
-fn inject_delay() {}
+async fn inject_delay() {}
 
 #[cfg(not(feature = "fault_injection"))]
 fn inject_io_failure() -> io::Result<()> {
@@ -240,24 +244,25 @@ pub type ConnectionOptions = Options;
 #[deprecated(since = "0.17.0", note = "this has been moved to `header::HeaderMap`.")]
 pub type Headers = HeaderMap;
 
+use lazy_static::lazy_static;
+use regex::Regex;
 use std::{
     io::{self, Error, ErrorKind},
     sync::Arc,
     time::{Duration, Instant},
 };
 
-use lazy_static::lazy_static;
-use regex::Regex;
-
+pub use connector::{IntoServerList, ServerAddress};
 pub use jetstream::JetStreamOptions;
 pub use message::Message;
-pub use options::Options;
-pub use subscription::{Handler, Subscription};
+pub use options::{AsyncCall, AsyncCallRet, AsyncErrorCallback, Options};
+pub use subscription::{Handler, Subscription, SubscriptionReceiver};
 
-/// A re-export of the `rustls` crate used in this crate,
+/// A re-export of the `tokio_rustls` crate used in this crate,
 /// for use in cases where manual client configurations
 /// must be provided using `Options::tls_client_config`.
-pub use rustls;
+pub use tokio_rustls;
+pub use tokio_rustls::rustls;
 
 #[doc(hidden)]
 pub use connect::ConnectInfo;
@@ -357,24 +362,76 @@ impl Drop for Inner {
     }
 }
 
-/// Connect to a NATS server at the given url.
+/// Connect to one or more NATS servers at the given URLs.
 ///
-/// # Example
+/// The [`IntoServerList`] trait allows to pass URLs in various different formats. Furthermore, if
+/// you need more control of the connection's parameters, use [`Options::connect()`].
+///
+/// # Examples
+///
+/// If no scheme is provided, the `nats://` scheme is assumed. The default port is `4222`.
 /// ```
-/// # fn main() -> std::io::Result<()> {
-/// let nc = nats::connect("demo.nats.io")?;
-/// # Ok(())
+/// # #[tokio::main]
+/// # async fn main() -> std::io::Result<()> {
+/// let nc = nats::connect("demo.nats.io").await?;
+/// # Ok::<(), std::io::Error>(())
 /// # }
 /// ```
-pub fn connect(nats_url: &str) -> io::Result<Connection> {
-    Options::new().connect(nats_url)
+///
+///
+/// It is possible to provide several URLs as a comma separated list.
+/// ```
+/// # #[tokio::main]
+/// # async fn main() -> std::io::Result<()> {
+/// let nc = nats::connect("demo.nats.io,tls://demo.nats.io:4443").await?;
+/// # Ok::<(), std::io::Error>(())
+/// # }
+/// ```
+///
+/// Alternatively, an array of strings can be passed.
+/// ```
+/// # use nats::IntoServerList;
+/// # #[tokio::main]
+/// # async fn main() -> std::io::Result<()> {
+/// let nc = nats::connect(&["demo.nats.io", "tls://demo.nats.io:4443"]).await?;
+/// # Ok::<(), std::io::Error>(())
+/// # }
+/// ```
+///
+/// Instead of using strings, [`ServerAddress`]es can be used directly as well. This is handy for
+/// validating user input.
+/// ```
+/// use std::io;
+/// use structopt::StructOpt;
+/// use nats::ServerAddress;
+///
+/// #[derive(Debug, StructOpt)]
+/// struct Config {
+///     #[structopt(short, long = "server", default_value = "demo.nats.io")]
+///     servers: Vec<ServerAddress>,
+/// }
+/// #[tokio::main]
+/// async fn main() -> io::Result<()> {
+///     let config = Config::from_args();
+///     let nc = nats::connect(config.servers).await?;
+///     Ok(())
+/// }
+/// ```
+pub async fn connect<I: IntoServerList>(nats_urls: I) -> io::Result<Connection> {
+    Options::new().connect(nats_urls).await
 }
 
 impl Connection {
-    /// Connects on a URL with the given options.
-    pub(crate) fn connect_with_options(url: &str, options: Options) -> io::Result<Connection> {
-        let client = Client::connect(url, options)?;
-        client.flush(DEFAULT_FLUSH_TIMEOUT)?;
+    /// Connects on one or more NATS servers with the given options.
+    ///
+    /// For more on how to use [`IntoServerList`] trait see [`crate::connect()`].
+    pub(crate) async fn connect_with_options<I>(urls: I, options: Options) -> io::Result<Connection>
+    where
+        I: IntoServerList,
+    {
+        let urls = urls.into_server_list()?;
+        let client = Client::connect(urls, options).await?;
+        client.flush(DEFAULT_FLUSH_TIMEOUT).await?;
         Ok(Connection(Arc::new(Inner { client })))
     }
 
@@ -382,42 +439,46 @@ impl Connection {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// let sub = nc.subscribe("foo")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// let sub = nc.subscribe("foo").await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn subscribe(&self, subject: &str) -> io::Result<Subscription> {
-        self.do_subscribe(subject, None)
+    pub async fn subscribe(&self, subject: &str) -> io::Result<Subscription> {
+        self.do_subscribe(subject, None).await
     }
 
     /// Create a queue subscription for the given NATS connection.
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// let sub = nc.queue_subscribe("foo", "production")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// let sub = nc.queue_subscribe("foo", "production").await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn queue_subscribe(&self, subject: &str, queue: &str) -> io::Result<Subscription> {
-        self.do_subscribe(subject, Some(queue))
+    pub async fn queue_subscribe(&self, subject: &str, queue: &str) -> io::Result<Subscription> {
+        self.do_subscribe(subject, Some(queue)).await
     }
 
     /// Publish a message on the given subject.
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// nc.publish("foo", "Hello World!")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// nc.publish("foo", "Hello World!").await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn publish(&self, subject: &str, msg: impl AsRef<[u8]>) -> io::Result<()> {
+    pub async fn publish(&self, subject: &str, msg: impl AsRef<[u8]>) -> io::Result<()> {
         self.publish_with_reply_or_headers(subject, None, None, msg)
+            .await
     }
 
     /// Publish a message on the given subject with a reply subject for
@@ -425,15 +486,16 @@ impl Connection {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
     /// let reply = nc.new_inbox();
-    /// let rsub = nc.subscribe(&reply)?;
-    /// nc.publish_request("foo", &reply, "Help me!")?;
+    /// let rsub = nc.subscribe(&reply).await?;
+    /// nc.publish_request("foo", &reply, "Help me!").await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn publish_request(
+    pub async fn publish_request(
         &self,
         subject: &str,
         reply: &str,
@@ -442,16 +504,18 @@ impl Connection {
         self.0
             .client
             .publish(subject, Some(reply), None, msg.as_ref())
+            .await
     }
 
     /// Create a new globally unique inbox which can be used for replies.
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
     /// let reply = nc.new_inbox();
-    /// let rsub = nc.subscribe(&reply)?;
+    /// let rsub = nc.subscribe(&reply).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -464,15 +528,20 @@ impl Connection {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// # nc.subscribe("foo")?.with_handler(move |m| { m.respond("ans=42")?; Ok(()) });
-    /// let resp = nc.request("foo", "Help me?")?;
+    /// # #![feature(async_closure)]
+    /// use futures::stream::StreamExt;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// let nc = nats::connect("demo.nats.io").await?;
+    /// let stream = nc.subscribe("foo").await?
+    ///      .with_async_handler( async move |m| { m.respond("ans=42").await?; Ok(()) });
+    /// let resp = nc.request("foo", "Help me?").await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn request(&self, subject: &str, msg: impl AsRef<[u8]>) -> io::Result<Message> {
+    pub async fn request(&self, subject: &str, msg: impl AsRef<[u8]>) -> io::Result<Message> {
         self.request_with_headers_or_timeout(subject, None, None, msg)
+            .await
     }
 
     /// Publish a message on the given subject as a request and receive the
@@ -481,23 +550,27 @@ impl Connection {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// # nc.subscribe("foo")?.with_handler(move |m| { m.respond("ans=42")?; Ok(()) });
-    /// let resp = nc.request_timeout("foo", "Help me?", std::time::Duration::from_secs(2))?;
+    /// # #![feature(async_closure)]
+    /// use futures::stream::StreamExt;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// let nc = nats::connect("demo.nats.io").await?;
+    /// nc.subscribe("foo").await?.with_async_handler(async move |m| { m.respond("ans=42").await?; Ok(()) });
+    /// let resp = nc.request_timeout("foo", "Help me?", std::time::Duration::from_secs(2)).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn request_timeout(
+    pub async fn request_timeout(
         &self,
         subject: &str,
         msg: impl AsRef<[u8]>,
         timeout: Duration,
     ) -> io::Result<Message> {
         self.request_with_headers_or_timeout(subject, None, Some(timeout), msg)
+            .await
     }
 
-    fn request_with_headers_or_timeout(
+    async fn request_with_headers_or_timeout(
         &self,
         subject: &str,
         maybe_headers: Option<&HeaderMap>,
@@ -506,13 +579,14 @@ impl Connection {
     ) -> io::Result<Message> {
         // Publish a request.
         let reply = self.new_inbox();
-        let sub = self.subscribe(&reply)?;
-        self.publish_with_reply_or_headers(subject, Some(reply.as_str()), maybe_headers, msg)?;
+        let sub = self.subscribe(&reply).await?;
+        self.publish_with_reply_or_headers(subject, Some(reply.as_str()), maybe_headers, msg)
+            .await?;
 
         // Wait for the response
         let result = if let Some(timeout) = maybe_timeout {
-            sub.next_timeout(timeout)
-        } else if let Some(msg) = sub.next() {
+            sub.next_timeout(timeout).await
+        } else if let Some(msg) = sub.next().await {
             Ok(msg)
         } else {
             Err(ErrorKind::ConnectionReset.into())
@@ -533,18 +607,27 @@ impl Connection {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// # nc.subscribe("foo")?.with_handler(move |m| { m.respond("ans=42")?; Ok(()) });
-    /// for msg in nc.request_multi("foo", "Help")?.iter().take(1) {}
+    /// # #![feature(async_closure)]
+    /// # use futures::stream::StreamExt;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # nc.subscribe("foo").await?.with_async_handler( async move |m| { m.respond("ans=42").await?; Ok(()) });
+    /// let mut sub = nc.request_multi("foo", "What is the answer?").await?.stream();
+    /// if let Some(msg) = sub.next().await { /* ... */ }
     /// # Ok(())
     /// # }
     /// ```
-    pub fn request_multi(&self, subject: &str, msg: impl AsRef<[u8]>) -> io::Result<Subscription> {
+    pub async fn request_multi(
+        &self,
+        subject: &str,
+        msg: impl AsRef<[u8]>,
+    ) -> io::Result<Subscription> {
         // Publish a request.
         let reply = self.new_inbox();
-        let sub = self.subscribe(&reply)?;
-        self.publish_with_reply_or_headers(subject, Some(reply.as_str()), None, msg)?;
+        let sub = self.subscribe(&reply).await?;
+        self.publish_with_reply_or_headers(subject, Some(reply.as_str()), None, msg)
+            .await?;
 
         // Return the subscription.
         Ok(sub)
@@ -558,14 +641,15 @@ impl Connection {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// nc.flush()?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// nc.flush().await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn flush(&self) -> io::Result<()> {
-        self.flush_timeout(DEFAULT_FLUSH_TIMEOUT)
+    pub async fn flush(&self) -> io::Result<()> {
+        self.flush_timeout(DEFAULT_FLUSH_TIMEOUT).await
     }
 
     /// Flush a NATS connection by sending a `PING` protocol and waiting for the
@@ -576,14 +660,15 @@ impl Connection {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// nc.flush()?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// nc.flush().await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn flush_timeout(&self, duration: Duration) -> io::Result<()> {
-        self.0.client.flush(duration)
+    pub async fn flush_timeout(&self, duration: Duration) -> io::Result<()> {
+        self.0.client.flush(duration).await
     }
 
     /// Close a NATS connection. All clones of
@@ -597,15 +682,16 @@ impl Connection {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// nc.close();
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// nc.close().await;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn close(self) {
-        self.0.client.flush(DEFAULT_FLUSH_TIMEOUT).ok();
-        self.0.client.close();
+    pub async fn close(self) {
+        self.0.client.flush(DEFAULT_FLUSH_TIMEOUT).await.ok();
+        self.0.client.close().await;
     }
 
     /// Calculates the round trip time between this client and the server,
@@ -614,21 +700,22 @@ impl Connection {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// println!("server rtt: {:?}", nc.rtt());
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// println!("server rtt: {:?}", nc.rtt().await);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn rtt(&self) -> io::Result<Duration> {
+    pub async fn rtt(&self) -> io::Result<Duration> {
         let start = Instant::now();
-        self.flush()?;
+        self.flush().await?;
         Ok(start.elapsed())
     }
 
     /// Returns true if the version is compatible with the version components.
-    pub fn is_server_compatible_version(&self, major: i64, minor: i64, patch: i64) -> bool {
-        let server_info = self.0.client.server_info();
+    pub async fn is_server_compatible_version(&self, major: i64, minor: i64, patch: i64) -> bool {
+        let server_info = self.0.client.server_info().await;
         let server_version_captures = VERSION_RE.captures(&server_info.version).unwrap();
         let server_major = server_version_captures
             .get(1)
@@ -659,14 +746,15 @@ impl Connection {
     /// Supported as of server version 2.1.6.
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// println!("ip: {:?}", nc.client_ip());
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// println!("ip: {:?}", nc.client_ip().await);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn client_ip(&self) -> io::Result<std::net::IpAddr> {
-        let info = self.0.client.server_info();
+    pub async fn client_ip(&self) -> io::Result<std::net::IpAddr> {
+        let info = self.0.client.server_info().await;
 
         match info.client_ip.as_str() {
             "" => Err(Error::new(
@@ -696,14 +784,15 @@ impl Connection {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// println!("ip: {:?}", nc.client_id());
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// let nc = nats::connect("demo.nats.io").await?;
+    /// println!("ip: {:?}", nc.client_id().await);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn client_id(&self) -> u64 {
-        self.0.client.server_info().client_id
+    pub async fn client_id(&self) -> u64 {
+        self.0.client.server_info().await.client_id
     }
 
     /// Send an unsubscription for all subs then flush the connection, allowing
@@ -721,29 +810,30 @@ impl Connection {
     /// # Example
     /// ```
     /// # use std::sync::{Arc, atomic::{AtomicBool, Ordering::SeqCst}};
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
     /// let received = Arc::new(AtomicBool::new(false));
     /// let received_2 = received.clone();
     ///
-    /// nc.subscribe("test.drain")?.with_handler(move |m| {
+    /// nc.subscribe("test.drain").await?.with_handler(move |m| {
     ///     received_2.store(true, SeqCst);
     ///     Ok(())
     /// });
     ///
-    /// nc.publish("test.drain", "message")?;
-    /// nc.drain()?;
+    /// nc.publish("test.drain", "message").await?;
+    /// nc.drain().await?;
     ///
-    /// # std::thread::sleep(std::time::Duration::from_secs(1));
+    /// # tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     ///
     /// assert!(received.load(SeqCst));
     ///
     /// # Ok(())
     /// # }
     /// ```
-    pub fn drain(&self) -> io::Result<()> {
-        self.0.client.flush(DEFAULT_FLUSH_TIMEOUT)?;
-        self.0.client.close();
+    pub async fn drain(&self) -> io::Result<()> {
+        self.0.client.flush(DEFAULT_FLUSH_TIMEOUT).await?;
+        self.0.client.close().await;
         Ok(())
     }
 
@@ -751,27 +841,31 @@ impl Connection {
     ///
     /// # Example
     /// ```no_run
-    /// # fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io")?;
-    /// let sub = nc.subscribe("foo.headers")?;
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// let sub = nc.subscribe("foo.headers").await?;
     /// let headers = [("header1", "value1"),
     ///                ("header2", "value2")].iter().collect();
     /// let reply_to = None;
-    /// nc.publish_with_reply_or_headers("foo.headers", reply_to, Some(&headers), "Hello World!")?;
-    /// nc.flush()?;
-    /// let message = sub.next_timeout(std::time::Duration::from_secs(2)).unwrap();
+    /// nc.publish_with_reply_or_headers("foo.headers", reply_to, Some(&headers), "Hello World!").await?;
+    /// nc.flush().await?;
+    /// let message = sub.next_timeout(std::time::Duration::from_secs(2)).await.unwrap();
     /// assert_eq!(message.headers.unwrap().len(), 2);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn publish_with_reply_or_headers(
+    pub async fn publish_with_reply_or_headers(
         &self,
         subject: &str,
         reply: Option<&str>,
         headers: Option<&HeaderMap>,
         msg: impl AsRef<[u8]>,
     ) -> io::Result<()> {
-        self.0.client.publish(subject, reply, headers, msg.as_ref())
+        self.0
+            .client
+            .publish(subject, reply, headers, msg.as_ref())
+            .await
     }
 
     /// Returns the maximum payload size the most recently
@@ -779,17 +873,18 @@ impl Connection {
     ///
     /// # Example
     /// ```
-    /// # fn main() -> std::io::Result<()> {
-    /// let nc = nats::connect("demo.nats.io")?;
-    /// println!("max payload: {:?}", nc.max_payload());
+    /// # #[tokio::main]
+    /// # async fn main() -> std::io::Result<()> {
+    /// let nc = nats::connect("demo.nats.io").await?;
+    /// println!("max payload: {:?}", nc.max_payload().await);
     /// # Ok(())
     /// # }
-    pub fn max_payload(&self) -> usize {
-        self.0.client.server_info.lock().max_payload
+    pub async fn max_payload(&self) -> usize {
+        self.0.client.server_info.lock().await.max_payload
     }
 
-    fn do_subscribe(&self, subject: &str, queue: Option<&str>) -> io::Result<Subscription> {
-        let (sid, receiver) = self.0.client.subscribe(subject, queue)?;
+    async fn do_subscribe(&self, subject: &str, queue: Option<&str>) -> io::Result<Subscription> {
+        let (sid, receiver) = self.0.client.subscribe(subject, queue).await?;
         Ok(Subscription::new(
             sid,
             subject.to_string(),
@@ -800,7 +895,7 @@ impl Connection {
 
     /// Attempts to publish a message without blocking.
     #[doc(hidden)]
-    pub fn try_publish_with_reply_or_headers(
+    pub async fn try_publish_with_reply_or_headers(
         &self,
         subject: &str,
         reply: Option<&str>,
@@ -810,5 +905,18 @@ impl Connection {
         self.0
             .client
             .try_publish(subject, reply, headers, msg.as_ref())
+            .await
     }
 }
+
+/*
+use once_cell::sync::OnceCell;
+static TOKIO_CONSOLE_INIT: OnceCell<bool> = OnceCell::new();
+
+pub(crate) fn tokio_console_init() {
+    TOKIO_CONSOLE_INIT.get_or_init(|| {
+        console_subscriber::init();
+        true
+    });
+}
+ */
