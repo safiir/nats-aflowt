@@ -26,8 +26,6 @@ use crate::{
     header::{self, HeaderMap},
 };
 
-use chrono::*;
-
 pub(crate) const MESSAGE_NOT_BOUND: &str = "message not bound to a connection";
 
 /// A message received on a subject.
