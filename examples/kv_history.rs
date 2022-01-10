@@ -1,13 +1,12 @@
 // example taken from doc for kv::Store::history
 //
 use futures::stream::StreamExt;
-use nats::kv::Config;
-use nats_aflowt as nats;
+use nats_aflowt::kv::Config;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let client = nats::connect("demo.nats.io").await?;
-    let context = nats::jetstream::new(client);
+    let client = nats_aflowt::connect("demo.nats.io").await?;
+    let context = nats_aflowt::jetstream::new(client);
 
     let bucket = context
         .create_key_value(&Config {

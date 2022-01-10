@@ -20,8 +20,8 @@
 //! ```no_run
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let nc = nats::connect("my_server::4222").await?;
-//! let js = nats::jetstream::new(nc);
+//! let nc = nats_aflowt::connect("my_server::4222").await?;
+//! let js = nats_aflowt::jetstream::new(nc);
 //!
 //! // add_stream converts a str into a
 //! // default `StreamConfig`.
@@ -35,10 +35,10 @@
 //! ```no_run
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use nats::jetstream::{StreamConfig, StorageType};
+//! use nats_aflowt::jetstream::{StreamConfig, StorageType};
 //!
-//! let nc = nats::connect("my_server::4222").await?;
-//! let js = nats::jetstream::new(nc);
+//! let nc = nats_aflowt::connect("my_server::4222").await?;
+//! let js = nats_aflowt::jetstream::new(nc);
 //!
 //! js.add_stream(StreamConfig {
 //!     name: "my_memory_stream".to_string(),
@@ -55,8 +55,8 @@
 //! ```no_run
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let nc = nats::connect("my_server::4222").await?;
-//! let js = nats::jetstream::new(nc);
+//! let nc = nats_aflowt::connect("my_server::4222").await?;
+//! let js = nats_aflowt::jetstream::new(nc);
 //!
 //! js.add_stream("my_stream").await?;
 //! js.add_consumer("my_stream", "my_consumer").await?;
@@ -67,11 +67,11 @@
 //! Create a new consumer with configuration:
 //!
 //! ```no_run
-//! use nats::jetstream::{ConsumerConfig};
+//! use nats_aflowt::jetstream::{ConsumerConfig};
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let nc = nats::connect("my_server::4222").await?;
-//! let js = nats::jetstream::new(nc);
+//! let nc = nats_aflowt::connect("my_server::4222").await?;
+//! let js = nats_aflowt::jetstream::new(nc);
 //!
 //! js.add_stream("my_stream").await?;
 //! js.add_consumer("my_stream", ConsumerConfig {
@@ -89,8 +89,8 @@
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!
-//! let nc = nats::connect("my_server::4222").await?;
-//! let js = nats::jetstream::new(nc);
+//! let nc = nats_aflowt::connect("my_server::4222").await?;
+//! let js = nats_aflowt::jetstream::new(nc);
 //!
 //! js.add_stream("my_stream").await?;
 //! let subscription = js.subscribe("my_stream").await?;
@@ -157,7 +157,7 @@ impl JetStreamOptions {
     /// # Example
     ///
     /// ```
-    /// let options = nats::jetstream::JetStreamOptions::new();
+    /// let options = nats_aflowt::jetstream::JetStreamOptions::new();
     /// ```
     pub fn new() -> JetStreamOptions {
         JetStreamOptions::default()
@@ -168,7 +168,7 @@ impl JetStreamOptions {
     /// # Example
     ///
     /// ```
-    /// let options = nats::jetstream::JetStreamOptions::new()
+    /// let options = nats_aflowt::jetstream::JetStreamOptions::new()
     ///     .api_prefix("some_exported_prefix".to_string());
     /// ```
     #[must_use]
@@ -186,7 +186,7 @@ impl JetStreamOptions {
     /// # Example
     ///
     /// ```
-    /// let options = nats::jetstream::JetStreamOptions::new()
+    /// let options = nats_aflowt::jetstream::JetStreamOptions::new()
     ///   .domain("some_domain");
     /// ```
     #[must_use]
@@ -769,22 +769,22 @@ impl JetStream {
     /// # Example
     ///
     /// ```
-    /// use nats::Stream;
+    /// use nats_aflowt::Stream;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
-    /// # context.add_stream("ephemeral");
-    /// # context.publish("ephemeral", "hello").await;
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
+    /// # let sub_name = format!("sub_{}", rand::random::<u64>());
+    /// # context.add_stream(sub_name.as_str()).await?;
+    /// # context.publish(&sub_name, "hello").await?;
     /// #    
-    /// let subscription = context.subscribe("ephemeral").await?;
+    /// let subscription = context.subscribe(&sub_name).await?;
     /// println!("Received message {:?}", subscription.next().await);
     /// # Ok(())
     /// # }
     /// ```
     pub async fn subscribe(&self, subject: &str) -> io::Result<PushSubscription> {
-        let ps = self.do_push_subscribe(subject, None, None).await?;
-        Ok(ps)
+        self.do_push_subscribe(subject, None, None).await
     }
 
     /// Creates a push consumer subscription with options.
@@ -795,11 +795,11 @@ impl JetStream {
     /// # Example
     ///
     /// ```no_run
-    /// # use nats::jetstream::{ SubscribeOptions };
+    /// # use nats_aflowt::jetstream::{ SubscribeOptions };
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
-    /// # let js = nats::jetstream::new(nc);
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let js = nats_aflowt::jetstream::new(nc);
     /// let sub = js.subscribe_with_options("foo",
     ///       &SubscribeOptions::bind("existing_stream".to_string(),
     ///       "existing_consumer".to_string())).await?;
@@ -811,8 +811,7 @@ impl JetStream {
         subject: &str,
         options: &SubscribeOptions,
     ) -> io::Result<PushSubscription> {
-        let ps = self.do_push_subscribe(subject, None, Some(options)).await?;
-        Ok(ps)
+        self.do_push_subscribe(subject, None, Some(options)).await
     }
 
     /// Creates a push-based consumer subscription with a queue group.
@@ -823,8 +822,8 @@ impl JetStream {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
     /// # context.add_stream("queue");
     /// let subscription = context.queue_subscribe("queue", "queue_group").await?;
     /// # Ok(())
@@ -835,8 +834,7 @@ impl JetStream {
         subject: &str,
         queue: &str,
     ) -> io::Result<PushSubscription> {
-        let ps = self.do_push_subscribe(subject, Some(queue), None).await?;
-        Ok(ps)
+        self.do_push_subscribe(subject, Some(queue), None).await
     }
 
     /// Creates a push-based consumer subscription with a queue group and options.
@@ -850,10 +848,8 @@ impl JetStream {
         queue: &str,
         options: &SubscribeOptions,
     ) -> io::Result<PushSubscription> {
-        let ps = self
-            .do_push_subscribe(subject, Some(queue), Some(options))
-            .await?;
-        Ok(ps)
+        self.do_push_subscribe(subject, Some(queue), Some(options))
+            .await
     }
 
     async fn handle_sequence_mismatch(

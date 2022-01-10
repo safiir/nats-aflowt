@@ -1,6 +1,10 @@
 This is an unofficial fork and is Alpha status
 
-# 0.16.100 - 
+# 0.16.102
+  - changed crate references in tests and examples from nats:: to nats_aflowt::
+  - fixed paths in Cargo.toml and README.md
+
+# 0.16.101 
   - merged prs 287-292
   - all functionality current as of nats.rs d22329c (main branch, jan 7, 2022)
   - added tests/request_multi.rs

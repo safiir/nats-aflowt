@@ -15,7 +15,7 @@ pub fn pub_benchmark(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, _| {
             b.to_async(tokio::runtime::Runtime::new().unwrap())
                 .iter_custom(|n| async move {
-                    let nc = nats::connect("127.0.0.1").await.unwrap();
+                    let nc = nats_aflowt::connect("127.0.0.1").await.unwrap();
                     let start = Instant::now();
                     for _i in 0..n {
                         nc.publish("bench", &msg).await.unwrap();

@@ -11,9 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use nats_aflowt as nats;
 mod util;
-use nats::{AsyncCall, AsyncErrorCallback, BoxFuture};
+use nats_aflowt::{AsyncCall, AsyncErrorCallback, BoxFuture};
 pub use util::*;
 
 struct SendBoolCallback {
@@ -34,7 +33,7 @@ struct SendErrCallback {
 }
 
 impl AsyncErrorCallback for SendErrCallback {
-    fn call(&self, _si: nats::ServerInfo, err: std::io::Error) -> BoxFuture<()> {
+    fn call(&self, _si: nats_aflowt::ServerInfo, err: std::io::Error) -> BoxFuture<()> {
         let tx = self.tx.clone();
         Box::pin(async move {
             tx.send(err).await.unwrap();
@@ -50,7 +49,7 @@ async fn pub_perms() {
     let (dtx, mut drx) = tokio::sync::mpsc::channel(1);
     let (etx, mut erx) = tokio::sync::mpsc::channel(1);
 
-    let nc = nats::Options::with_user_pass("derek", "s3cr3t!")
+    let nc = nats_aflowt::Options::with_user_pass("derek", "s3cr3t!")
         .error_callback(SendErrCallback { tx: etx })
         .disconnect_callback(SendBoolCallback { tx: dtx })
         .connect(&s.client_url())
@@ -82,7 +81,7 @@ async fn sub_perms() {
     let (dtx, mut drx) = tokio::sync::mpsc::channel(1);
     let (etx, mut erx) = tokio::sync::mpsc::channel(1);
 
-    let nc = nats::Options::with_user_pass("derek", "s3cr3t!")
+    let nc = nats_aflowt::Options::with_user_pass("derek", "s3cr3t!")
         .error_callback(SendErrCallback { tx: etx })
         .disconnect_callback(SendBoolCallback { tx: dtx })
         .connect(&s.client_url())

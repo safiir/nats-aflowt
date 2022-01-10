@@ -17,17 +17,16 @@ use rand::prelude::*;
 #[allow(unused_imports)]
 use tokio::io::AsyncReadExt;
 
-use nats_aflowt as nats;
 mod util;
 
 #[tokio::test]
 async fn object_random() {
     let server = util::run_server("tests/configs/jetstream.conf");
-    let client = nats::connect(&server.client_url()).await.unwrap();
-    let context = nats::jetstream::new(client);
+    let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
+    let context = nats_aflowt::jetstream::new(client);
 
     let bucket = context
-        .create_object_store(&nats::object_store::Config {
+        .create_object_store(&nats_aflowt::object_store::Config {
             bucket: "OBJECTS".to_string(),
             ..Default::default()
         })
@@ -121,11 +120,11 @@ async fn object_random() {
 #[tokio::test]
 async fn object_sealed() {
     let server = util::run_server("tests/configs/jetstream.conf");
-    let client = nats::connect(&server.client_url()).await.unwrap();
-    let context = nats::jetstream::new(client);
+    let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
+    let context = nats_aflowt::jetstream::new(client);
 
     let bucket = context
-        .create_object_store(&nats::object_store::Config {
+        .create_object_store(&nats_aflowt::object_store::Config {
             bucket: "OBJECTS".to_string(),
             ..Default::default()
         })
@@ -141,11 +140,11 @@ async fn object_sealed() {
 #[tokio::test]
 async fn object_delete() {
     let server = util::run_server("tests/configs/jetstream.conf");
-    let client = nats::connect(&server.client_url()).await.unwrap();
-    let context = nats::jetstream::new(client);
+    let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
+    let context = nats_aflowt::jetstream::new(client);
 
     let bucket = context
-        .create_object_store(&nats::object_store::Config {
+        .create_object_store(&nats_aflowt::object_store::Config {
             bucket: "OBJECTS".to_string(),
             ..Default::default()
         })
@@ -169,11 +168,11 @@ async fn object_delete() {
 #[tokio::test]
 async fn object_multiple_delete() {
     let server = util::run_server("tests/configs/jetstream.conf");
-    let client = nats::connect(&server.client_url()).await.unwrap();
-    let context = nats::jetstream::new(client);
+    let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
+    let context = nats_aflowt::jetstream::new(client);
 
     let bucket = context
-        .create_object_store(&nats::object_store::Config {
+        .create_object_store(&nats_aflowt::object_store::Config {
             bucket: "2OD".to_string(),
             ..Default::default()
         })
@@ -206,11 +205,11 @@ async fn object_multiple_delete() {
 #[tokio::test]
 async fn object_names() {
     let server = util::run_server("tests/configs/jetstream.conf");
-    let client = nats::connect(&server.client_url()).await.unwrap();
-    let context = nats::jetstream::new(client);
+    let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
+    let context = nats_aflowt::jetstream::new(client);
 
     let bucket = context
-        .create_object_store(&nats::object_store::Config {
+        .create_object_store(&nats_aflowt::object_store::Config {
             bucket: "NAMES".to_string(),
             ..Default::default()
         })
@@ -235,11 +234,11 @@ async fn object_names() {
 async fn object_watch() {
     use futures::stream::StreamExt as _;
     let server = util::run_server("tests/configs/jetstream.conf");
-    let client = nats::connect(&server.client_url()).await.unwrap();
-    let context = nats::jetstream::new(client);
+    let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
+    let context = nats_aflowt::jetstream::new(client);
 
     let bucket = context
-        .create_object_store(&nats::object_store::Config {
+        .create_object_store(&nats_aflowt::object_store::Config {
             bucket: "WATCH".to_string(),
             ..Default::default()
         })

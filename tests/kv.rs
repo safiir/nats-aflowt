@@ -15,19 +15,16 @@
 mod util;
 
 use futures::stream::StreamExt;
-use nats::jetstream::StreamConfig;
-use nats_aflowt as nats;
-
-use nats::kv::*;
+use nats_aflowt::{jetstream::StreamConfig, kv::*};
 
 #[tokio::test]
 async fn key_value_entry() {
     let server = util::run_server("tests/configs/jetstream.conf");
-    let client = nats::connect(&server.client_url()).await.unwrap();
-    let context = nats::jetstream::new(client);
+    let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
+    let context = nats_aflowt::jetstream::new(client);
 
     let kv = context
-        .create_key_value(&nats::kv::Config {
+        .create_key_value(&nats_aflowt::kv::Config {
             bucket: "ENTRY".to_string(),
             history: 5,
             max_age: std::time::Duration::from_secs(3600),
@@ -81,11 +78,11 @@ async fn key_value_entry() {
 #[tokio::test]
 async fn key_value_short_history() {
     let server = util::run_server("tests/configs/jetstream.conf");
-    let client = nats::connect(&server.client_url()).await.unwrap();
-    let context = nats::jetstream::new(client);
+    let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
+    let context = nats_aflowt::jetstream::new(client);
 
     let kv = context
-        .create_key_value(&nats::kv::Config {
+        .create_key_value(&nats_aflowt::kv::Config {
             bucket: "HISTORY".to_string(),
             history: 5,
             ..Default::default()
@@ -109,11 +106,11 @@ async fn key_value_short_history() {
 #[tokio::test]
 async fn key_value_long_history() {
     let server = util::run_server("tests/configs/jetstream.conf");
-    let client = nats::connect(&server.client_url()).await.unwrap();
-    let context = nats::jetstream::new(client);
+    let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
+    let context = nats_aflowt::jetstream::new(client);
 
     let kv = context
-        .create_key_value(&nats::kv::Config {
+        .create_key_value(&nats_aflowt::kv::Config {
             bucket: "HISTORY".to_string(),
             history: 25,
             ..Default::default()
@@ -137,11 +134,11 @@ async fn key_value_long_history() {
 #[tokio::test]
 async fn key_value_watch() {
     let server = util::run_server("tests/configs/jetstream.conf");
-    let client = nats::connect(&server.client_url()).await.unwrap();
-    let context = nats::jetstream::new(client);
+    let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
+    let context = nats_aflowt::jetstream::new(client);
 
     let kv = context
-        .create_key_value(&nats::kv::Config {
+        .create_key_value(&nats_aflowt::kv::Config {
             bucket: "WATCH".to_string(),
             history: 10,
             ..Default::default()
@@ -177,11 +174,11 @@ async fn key_value_watch() {
 #[tokio::test]
 async fn key_value_watch_all() {
     let server = util::run_server("tests/configs/jetstream.conf");
-    let client = nats::connect(&server.client_url()).await.unwrap();
-    let context = nats::jetstream::new(client);
+    let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
+    let context = nats_aflowt::jetstream::new(client);
 
     let kv = context
-        .create_key_value(&nats::kv::Config {
+        .create_key_value(&nats_aflowt::kv::Config {
             bucket: "WATCH".to_string(),
             history: 10,
             ..Default::default()
@@ -193,7 +190,7 @@ async fn key_value_watch_all() {
     // https://github.com/nats-io/nats.rs/issues/286 is still affecting our codebase.
     // It was causing one store being able to read data from another.
     let skv = context
-        .create_key_value(&nats::kv::Config {
+        .create_key_value(&nats_aflowt::kv::Config {
             bucket: "TEST_CONFLICT".to_string(),
             history: 10,
             ..Default::default()
@@ -229,8 +226,8 @@ async fn key_value_watch_all() {
 #[tokio::test]
 async fn key_value_bind() {
     let server = util::run_server("tests/configs/jetstream.conf");
-    let client = nats::connect(&server.client_url()).await.unwrap();
-    let context = nats::jetstream::new(client);
+    let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
+    let context = nats_aflowt::jetstream::new(client);
 
     context
         .create_key_value(&Config {
@@ -260,8 +257,8 @@ async fn key_value_bind() {
 #[tokio::test]
 async fn key_value_delete() {
     let server = util::run_server("tests/configs/jetstream.conf");
-    let client = nats::connect(&server.client_url()).await.unwrap();
-    let context = nats::jetstream::new(client);
+    let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
+    let context = nats_aflowt::jetstream::new(client);
 
     context
         .create_key_value(&Config {
@@ -280,8 +277,8 @@ async fn key_value_delete() {
 #[tokio::test]
 async fn key_value_purge() {
     let server = util::run_server("tests/configs/jetstream.conf");
-    let client = nats::connect(&server.client_url()).await.unwrap();
-    let context = nats::jetstream::new(client);
+    let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
+    let context = nats_aflowt::jetstream::new(client);
 
     let bucket = context
         .create_key_value(&Config {
@@ -317,8 +314,8 @@ async fn key_value_keys() {
     use futures::stream::StreamExt as _;
 
     let server = util::run_server("tests/configs/jetstream.conf");
-    let client = nats::connect(&server.client_url()).await.unwrap();
-    let context = nats::jetstream::new(client);
+    let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
+    let context = nats_aflowt::jetstream::new(client);
 
     let kv = context
         .create_key_value(&Config {

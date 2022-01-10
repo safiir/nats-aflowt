@@ -1,14 +1,14 @@
 [package]
 name = "nats-aflowt"
-version = "0.16.101"
+version = "0.16.102"
 description = "Unofficial port of NATS rust client to pure async"
 authors = ["client by NATS team", "async port by stevelr"]
 #authors = ["Derek Collison <derek@nats.io>", "Tyler Neely <tyler@nats.io>", "Stjepan Glavina <stjepan@nats.io>"]
 edition = "2021"
 license = "Apache-2.0"
-documentation = "https://docs.rs/nats"
-homepage = "https://github.com/nats-io/nats.rs"
-repository = "https://github.com/nats-io/nats.rs"
+documentation = "https://docs.rs/nats-aflowt"
+homepage = "https://github.com/stevelr/nats.rs"
+repository = "https://github.com/stevelr/nats.rs"
 readme = "README.md"
 keywords = ["nats", "client", "messaging", "api", "async"]
 categories = ["network-programming", "api-bindings"]
@@ -38,7 +38,7 @@ split-debuginfo = "unpacked"
 
 [dependencies]
 async-stream = "0.3"
-console-subscriber = "0.1"
+#console-subscriber = "0.1"
 async-trait = "0.1"
 base64 = "0.13.0"
 base64-url = "1.4.10"
@@ -86,6 +86,7 @@ nats_test_server = { path = "nats_test_server" }
 quicli = "0.4.0"
 smol = "1.2.5"
 structopt = "0.3.21"
+nats = { version="0.16", package="nats-aflowt", path="." }
 
 
 [[bench]]

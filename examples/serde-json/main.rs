@@ -1,4 +1,3 @@
-use nats_aflowt as nats;
 use pin_utils::pin_mut;
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +11,9 @@ struct Person {
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     use futures::prelude::*;
-    let nc = nats::connect("demo.nats.io").await.expect("demo.nats.io");
+    let nc = nats_aflowt::connect("demo.nats.io")
+        .await
+        .expect("demo.nats.io");
     let subj = nc.new_inbox();
 
     let p = Person {

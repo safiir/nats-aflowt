@@ -11,7 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use nats_aflowt as nats;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -45,7 +44,7 @@ async fn reconnect_test() {
     let server = NatsTestServer::build().bugginess(200).spawn();
 
     let nc = loop {
-        if let Ok(nc) = nats::Options::new()
+        if let Ok(nc) = nats_aflowt::Options::new()
             .max_reconnects(None)
             .connect(&server.address().to_string())
             .await

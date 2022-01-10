@@ -1,4 +1,3 @@
-use nats_aflowt as nats;
 use std::{
     num::NonZeroUsize,
     sync::{Arc, Barrier},
@@ -48,15 +47,15 @@ struct Args {
     subject: String,
 }
 
-async fn mk_connect(args: Args) -> nats::Connection {
+async fn mk_connect(args: Args) -> nats_aflowt::Connection {
     let tls = args.tls;
     let url = args.url;
     let creds = args.creds;
 
     let opts = if let Some(creds_path) = creds.clone() {
-        nats::Options::with_credentials(creds_path)
+        nats_aflowt::Options::with_credentials(creds_path)
     } else {
-        nats::Options::new()
+        nats_aflowt::Options::new()
     };
     opts.with_name("nats_bench rust client")
         .tls_required(tls)

@@ -118,16 +118,16 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
-    /// #
-    /// # context.add_stream("next").await?;
-    /// # context.publish("next", "hello").await?;
-    ///
-    /// # let subscription = context.subscribe("next").await?;
-    /// match subscription.next().await {
-    ///     Some(message) => println!("Received: '{}'", message),
-    ///     None => println!("No more messages"),
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
+    /// # let name=format!("next_{}", rand::random::<u64>());
+    /// # context.add_stream(name.as_str()).await?;
+    /// # context.publish(&name, "hello").await?;
+    /// # let subscription = context.subscribe(&name).await?;
+    /// if let Some(message) = subscription.next().await {
+    ///     println!("Received: '{}'", message);
+    /// } else {
+    ///     println!("No more messages");
     /// }
     /// # Ok(())
     /// # }
@@ -155,10 +155,10 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
     /// #
-    /// # context.add_stream("try_next");
+    /// # context.add_stream("try_next").await?;
     /// # let subscription = context.subscribe("try_next").await?;
     /// if let Some(message) = subscription.try_next().await {
     ///     println!("Received {}", message);
@@ -188,8 +188,8 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
     /// # let subscription = context.subscribe("foo").await?;
     /// if let Ok(message) = subscription.next_timeout(std::time::Duration::from_secs(1)).await {
     ///     println!("Received {}", message);
@@ -231,9 +231,9 @@ impl PushSubscription {
     /// use futures::stream::StreamExt;
     /// #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
-    /// # context.add_stream("messages-100");
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
+    /// # context.add_stream("messages-100").await?;
     /// let mut subscription = context.subscribe("messages-100").await?.messages();
     /// while let Some(message) = subscription.next().await {
     ///     println!("Received message {:?}", message);
@@ -264,9 +264,9 @@ impl PushSubscription {
     /// use futures::stream::StreamExt;
     /// #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
-    /// # context.add_stream("stream");
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
+    /// # context.add_stream("stream").await?;
     /// let mut sub = context.subscribe("stream").await?.stream();
     /// # context.publish("stream", "hello").await?;
     /// while let Some(message) = sub.next().await {
@@ -290,9 +290,9 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
-    /// # context.add_stream("with_handler");
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
+    /// # context.add_stream("with_handler").await?;
     /// context.subscribe("with_handler").await?.with_handler(move |message| {
     ///     println!("received {}", &message);
     ///     Ok(())
@@ -338,7 +338,7 @@ impl PushSubscription {
     /// #![feature(async_closure)]
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// let sub = nc.subscribe("foo").await?
     ///      .with_async_handler( async move |m| { m.respond("ans=42").await?; Ok(()) });
     /// # Ok(())
@@ -374,8 +374,8 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
     /// # context.add_stream("with_process_handler").await;
     /// context.subscribe("with_process_handler").await?.with_process_handler(|message| {
     ///     println!("Received {}", &message);
@@ -428,13 +428,14 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
+    /// # let sub_name=format!("process_{}", rand::random::<u64>());
+    /// # context.add_stream(sub_name.as_str()).await?;
+    /// # context.publish(&sub_name, "hello").await?;
+    /// # context.publish(&sub_name, "hello2").await?;
     /// #
-    /// # context.add_stream("process").await?;
-    /// # context.publish("process", "hello").await?;
-    /// #
-    /// let mut subscription = context.subscribe("process").await?;
+    /// # let mut subscription = context.subscribe(&sub_name).await?;
     /// subscription.process(|message| {
     ///     println!("Received message {:?}", message);
     ///     Ok(())
@@ -443,8 +444,8 @@ impl PushSubscription {
     /// # }
     /// ```
     pub async fn process<R, F: Fn(&Message) -> io::Result<R>>(&mut self, f: F) -> io::Result<R> {
+        //TODO(ss): remove unwrap and return error if next() returns None
         let next = self.next().await.unwrap();
-
         let result = f(&next)?;
         if self.0.consumer_ack_policy != AckPolicy::None {
             next.ack().await?;
@@ -464,16 +465,15 @@ impl PushSubscription {
     /// # use std::time::Duration;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
-    /// #
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
     /// # context.add_stream("process_timeout").await?;
     /// # context.publish("process_timeout", "hello").await?;
+    /// # context.publish("process_timeout", "hello2").await?;
     /// #
     /// let mut subscription = context.subscribe("process_timeout").await?;
     /// subscription.process_timeout(Duration::from_secs(1), |message| {
     ///     println!("Received message {:?}", message);
-    ///
     ///     Ok(())
     /// }).await?;
     /// # Ok(())
@@ -501,8 +501,8 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
     /// #
     /// # context.add_stream("foo").await?;
     /// let subscription = context.subscribe("foo").await?;
@@ -526,9 +526,8 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
-    /// #
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
     /// # context.add_stream("unsubscribe").await?;
     /// #
     /// let subscription = context.subscribe("unsubscribe").await?;
@@ -579,8 +578,8 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
     /// # context.add_stream("close").await?;
     /// let subscription = context.subscribe("close").await?;
     /// subscription.close().await?;
@@ -612,8 +611,8 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
     /// # let sub_name = format!("drain_{}", rand::random::<u32>());
     /// # context.add_stream(sub_name.as_str()).await?;
     /// # let mut subscription = context.subscribe(&sub_name).await?;
@@ -674,7 +673,7 @@ impl Handler {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// let sub = nc.subscribe("foo").await?.with_handler(move |msg| {
     ///     println!("Received {}", &msg);
     ///     Ok(())

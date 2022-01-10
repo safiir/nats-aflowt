@@ -11,7 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use nats_aflowt as nats;
 use std::io;
 use std::path::PathBuf;
 
@@ -22,12 +21,12 @@ pub use util::*;
 async fn basic_tls() -> io::Result<()> {
     let s = util::run_server("tests/configs/tls.conf");
 
-    assert!(nats::connect("nats://127.0.0.1").await.is_err());
+    assert!(nats_aflowt::connect("nats://127.0.0.1").await.is_err());
 
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     // test scenario where rootCA, client certificate and client key are all in one .pem file
-    nats::Options::with_user_pass("derek", "porkchop")
+    nats_aflowt::Options::with_user_pass("derek", "porkchop")
         .add_root_certificate(path.join("tests/configs/certs/client-all.pem"))
         .client_cert(
             path.join("tests/configs/certs/client-all.pem"),
@@ -36,7 +35,7 @@ async fn basic_tls() -> io::Result<()> {
         .connect(&s.client_url())
         .await?;
 
-    nats::Options::with_user_pass("derek", "porkchop")
+    nats_aflowt::Options::with_user_pass("derek", "porkchop")
         .add_root_certificate(path.join("tests/configs/certs/rootCA.pem"))
         .client_cert(
             path.join("tests/configs/certs/client-cert.pem"),

@@ -13,18 +13,17 @@
 
 //! Unofficial port of NATS rust client to pure async.
 //!
-//! Source: [https://github.com/stevelr/nats-aflowt]: https://github.com/stevelr/nats-aflowt
-//!
 //! A Rust client for the NATS.io ecosystem.
 //!
 //! NATS.io is a simple, secure and high performance open source messaging
 //! system for cloud native applications, `IoT` messaging, and microservices
 //! architectures.
 //!
-//! For more information see [https://nats.io/].
+//! ## References
 //!
-//! [https://nats.io/]: https://nats.io/
-//! [`async-nats`]: https://docs.rs/async-nats
+//! - Official NATS site [https://nats.io/](https://nats.io/)
+//! - Crate [https://crates.io/crates/nats-aflowt](https://crates.io/crates/nats-aflowt)
+//! - Source [https://github.com/stevelr/nats.rs/](https://github.com/stevelr/nats.rs/)
 //!
 //! ## Examples
 //!
@@ -36,16 +35,16 @@
 //! ```no_run
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let nc = nats::connect("demo.nats.io").await?;
+//! let nc = nats_aflowt::connect("demo.nats.io").await?;
 //!
-//! let nc2 = nats::Options::with_user_pass("derek", "s3cr3t!")
+//! let nc2 = nats_aflowt::Options::with_user_pass("derek", "s3cr3t!")
 //!     .with_name("My Rust NATS App")
 //!     .connect("127.0.0.1").await?;
 //!
-//! let nc3 = nats::Options::with_credentials("path/to/my.creds")
+//! let nc3 = nats_aflowt::Options::with_credentials("path/to/my.creds")
 //!     .connect("connect.ngs.global").await?;
 //!
-//! let nc4 = nats::Options::new()
+//! let nc4 = nats_aflowt::Options::new()
 //!     .add_root_certificate("my-certs.pem")
 //!     .connect("tls://demo.nats.io:4443").await?;
 //! # Ok(()) }
@@ -56,7 +55,7 @@
 //! ```
 //! # #[tokio::main]
 //! # async fn main() -> std::io::Result<()> {
-//! let nc = nats::connect("demo.nats.io").await?;
+//! let nc = nats_aflowt::connect("demo.nats.io").await?;
 //! nc.publish("my.subject", "Hello World!").await?;
 //!
 //! nc.publish("my.subject", "my message").await?;
@@ -75,7 +74,7 @@
 //! # #[tokio::main]
 //! # async fn main() -> std::io::Result<()> {
 //! # use std::time::Duration;
-//! let nc = nats::connect("demo.nats.io").await?;
+//! let nc = nats_aflowt::connect("demo.nats.io").await?;
 //! let mut sub = nc.subscribe("foo").await?.stream();
 //!
 //! // use as Stream
@@ -101,7 +100,7 @@
 //! # use futures::stream::StreamExt;
 //! # #[tokio::main]
 //! # async fn main() -> std::io::Result<()> {
-//! let nc = nats::connect("demo.nats.io").await?;
+//! let nc = nats_aflowt::connect("demo.nats.io").await?;
 //! let resp = nc.request("foo", "Help me?").await?;
 //!
 //! // With a timeout.
@@ -373,7 +372,7 @@ impl Drop for Inner {
 /// ```
 /// # #[tokio::main]
 /// # async fn main() -> std::io::Result<()> {
-/// let nc = nats::connect("demo.nats.io").await?;
+/// let nc = nats_aflowt::connect("demo.nats.io").await?;
 /// # Ok::<(), std::io::Error>(())
 /// # }
 /// ```
@@ -383,17 +382,17 @@ impl Drop for Inner {
 /// ```
 /// # #[tokio::main]
 /// # async fn main() -> std::io::Result<()> {
-/// let nc = nats::connect("demo.nats.io,tls://demo.nats.io:4443").await?;
+/// let nc = nats_aflowt::connect("demo.nats.io,tls://demo.nats.io:4443").await?;
 /// # Ok::<(), std::io::Error>(())
 /// # }
 /// ```
 ///
 /// Alternatively, an array of strings can be passed.
 /// ```
-/// # use nats::IntoServerList;
+/// # use nats_aflowt::IntoServerList;
 /// # #[tokio::main]
 /// # async fn main() -> std::io::Result<()> {
-/// let nc = nats::connect(&["demo.nats.io", "tls://demo.nats.io:4443"]).await?;
+/// let nc = nats_aflowt::connect(&["demo.nats.io", "tls://demo.nats.io:4443"]).await?;
 /// # Ok::<(), std::io::Error>(())
 /// # }
 /// ```
@@ -403,7 +402,7 @@ impl Drop for Inner {
 /// ```
 /// use std::io;
 /// use structopt::StructOpt;
-/// use nats::ServerAddress;
+/// use nats_aflowt::ServerAddress;
 ///
 /// #[derive(Debug, StructOpt)]
 /// struct Config {
@@ -413,7 +412,7 @@ impl Drop for Inner {
 /// #[tokio::main]
 /// async fn main() -> io::Result<()> {
 ///     let config = Config::from_args();
-///     let nc = nats::connect(config.servers).await?;
+///     let nc = nats_aflowt::connect(config.servers).await?;
 ///     Ok(())
 /// }
 /// ```
@@ -441,7 +440,7 @@ impl Connection {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// let sub = nc.subscribe("foo").await?;
     /// # Ok(())
     /// # }
@@ -456,7 +455,7 @@ impl Connection {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// let sub = nc.queue_subscribe("foo", "production").await?;
     /// # Ok(())
     /// # }
@@ -471,7 +470,7 @@ impl Connection {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// nc.publish("foo", "Hello World!").await?;
     /// # Ok(())
     /// # }
@@ -488,7 +487,7 @@ impl Connection {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// let reply = nc.new_inbox();
     /// let rsub = nc.subscribe(&reply).await?;
     /// nc.publish_request("foo", &reply, "Help me!").await?;
@@ -513,7 +512,7 @@ impl Connection {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// let reply = nc.new_inbox();
     /// let rsub = nc.subscribe(&reply).await?;
     /// # Ok(())
@@ -532,7 +531,7 @@ impl Connection {
     /// use futures::stream::StreamExt;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::connect("demo.nats.io").await?;
+    /// let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// let stream = nc.subscribe("foo").await?
     ///      .with_async_handler( async move |m| { m.respond("ans=42").await?; Ok(()) });
     /// let resp = nc.request("foo", "Help me?").await?;
@@ -554,7 +553,7 @@ impl Connection {
     /// use futures::stream::StreamExt;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::connect("demo.nats.io").await?;
+    /// let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// nc.subscribe("foo").await?.with_async_handler(async move |m| { m.respond("ans=42").await?; Ok(()) });
     /// let resp = nc.request_timeout("foo", "Help me?", std::time::Duration::from_secs(2)).await?;
     /// # Ok(())
@@ -611,7 +610,7 @@ impl Connection {
     /// # use futures::stream::StreamExt;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// # nc.subscribe("foo").await?.with_async_handler( async move |m| { m.respond("ans=42").await?; Ok(()) });
     /// let mut sub = nc.request_multi("foo", "What is the answer?").await?.stream();
     /// if let Some(msg) = sub.next().await { /* ... */ }
@@ -643,7 +642,7 @@ impl Connection {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// nc.flush().await?;
     /// # Ok(())
     /// # }
@@ -662,7 +661,7 @@ impl Connection {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// nc.flush().await?;
     /// # Ok(())
     /// # }
@@ -684,7 +683,7 @@ impl Connection {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// nc.close().await;
     /// # Ok(())
     /// # }
@@ -702,7 +701,7 @@ impl Connection {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// println!("server rtt: {:?}", nc.rtt().await);
     /// # Ok(())
     /// # }
@@ -748,7 +747,7 @@ impl Connection {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// println!("ip: {:?}", nc.client_ip().await);
     /// # Ok(())
     /// # }
@@ -786,7 +785,7 @@ impl Connection {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::connect("demo.nats.io").await?;
+    /// let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// println!("ip: {:?}", nc.client_id().await);
     /// # Ok(())
     /// # }
@@ -812,7 +811,7 @@ impl Connection {
     /// # use std::sync::{Arc, atomic::{AtomicBool, Ordering::SeqCst}};
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// let received = Arc::new(AtomicBool::new(false));
     /// let received_2 = received.clone();
     ///
@@ -843,7 +842,7 @@ impl Connection {
     /// ```no_run
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// let sub = nc.subscribe("foo.headers").await?;
     /// let headers = [("header1", "value1"),
     ///                ("header2", "value2")].iter().collect();
@@ -875,7 +874,7 @@ impl Connection {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::connect("demo.nats.io").await?;
+    /// let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// println!("max payload: {:?}", nc.max_payload().await);
     /// # Ok(())
     /// # }

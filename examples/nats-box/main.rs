@@ -1,5 +1,4 @@
-use nats::{AsyncCall, BoxFuture};
-use nats_aflowt as nats;
+use nats_aflowt::{AsyncCall, BoxFuture};
 use quicli::prelude::*;
 use structopt::{clap::ArgGroup, StructOpt};
 
@@ -29,7 +28,7 @@ impl AsyncCall for PrintCallback {
 struct Cli {
     /// NATS server
     #[structopt(long, short, default_value = "demo.nats.io")]
-    server: nats::ServerAddress,
+    server: nats_aflowt::ServerAddress,
 
     /// User Credentials File
     #[structopt(long = "creds", group = "auth")]
@@ -61,11 +60,11 @@ async fn main() -> CliResult {
     let args = Cli::from_args();
 
     let opts = if let Some(creds_path) = args.creds {
-        nats::Options::with_credentials(creds_path)
+        nats_aflowt::Options::with_credentials(creds_path)
     } else if let Some(token) = args.auth_token {
-        nats::Options::with_token(&token)
+        nats_aflowt::Options::with_token(&token)
     } else {
-        nats::Options::new()
+        nats_aflowt::Options::new()
     };
 
     let nc = opts

@@ -11,7 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use nats_aflowt as nats;
 use std::io::{BufRead, BufReader};
 use std::net::TcpStream;
 use std::path::PathBuf;
@@ -20,8 +19,10 @@ use std::{env, fs};
 use std::{thread, time::Duration};
 
 use lazy_static::lazy_static;
-use nats::jetstream::{JetStream, JetStreamOptions};
-use nats::Connection;
+use nats_aflowt::{
+    jetstream::{JetStream, JetStreamOptions},
+    Connection,
+};
 use regex::Regex;
 
 pub struct Server {
@@ -160,7 +161,7 @@ pub fn run_basic_server() -> Server {
 #[allow(dead_code)]
 pub async fn run_basic_jetstream() -> (Server, Connection, JetStream) {
     let s = run_server("tests/configs/jetstream.conf");
-    let nc = nats::connect(&s.client_url()).await.unwrap();
+    let nc = nats_aflowt::connect(&s.client_url()).await.unwrap();
     let js = JetStream::new(nc.clone(), JetStreamOptions::default());
 
     (s, nc, js)

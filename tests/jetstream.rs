@@ -11,19 +11,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use nats_aflowt as nats;
 use std::{collections::HashSet, io, iter::FromIterator, time::Duration};
 
 mod util;
-use nats::jetstream;
-use nats::jetstream::*;
+use nats_aflowt::jetstream::{self, *};
 pub use util::*;
 
 #[tokio::test]
 async fn jetstream_not_enabled() {
     let s = util::run_basic_server();
-    let nc = nats::connect(&s.client_url()).await.unwrap();
-    let js = nats::jetstream::new(nc);
+    let nc = nats_aflowt::connect(&s.client_url()).await.unwrap();
+    let js = jetstream::new(nc);
 
     let err = js.account_info().await.unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::NotFound);
@@ -43,8 +41,8 @@ async fn jetstream_not_enabled() {
 #[tokio::test]
 async fn jetstream_account_not_enabled() {
     let s = util::run_server("tests/configs/jetstream_account_not_enabled.conf");
-    let nc = nats::connect(&s.client_url()).await.unwrap();
-    let js = nats::jetstream::new(nc);
+    let nc = nats_aflowt::connect(&s.client_url()).await.unwrap();
+    let js = nats_aflowt::jetstream::new(nc);
 
     let err = js.account_info().await.unwrap_err();
     println!("{:?}", err);
@@ -268,8 +266,8 @@ async fn jetstream_publish() {
 #[tokio::test]
 async fn jetstream_subscribe() {
     let s = util::run_server("tests/configs/jetstream.conf");
-    let nc = nats::connect(&s.client_url()).await.unwrap();
-    let js = nats::jetstream::new(nc);
+    let nc = nats_aflowt::connect(&s.client_url()).await.unwrap();
+    let js = nats_aflowt::jetstream::new(nc);
 
     js.add_stream(&StreamConfig {
         name: "TEST".to_string(),
@@ -310,8 +308,8 @@ async fn jetstream_subscribe() {
 #[tokio::test]
 async fn jetstream_subscribe_durable() {
     let s = util::run_server("tests/configs/jetstream.conf");
-    let nc = nats::connect(&s.client_url()).await.unwrap();
-    let js = nats::jetstream::new(nc);
+    let nc = nats_aflowt::connect(&s.client_url()).await.unwrap();
+    let js = jetstream::new(nc);
 
     js.add_stream(&StreamConfig {
         name: "TEST".to_string(),
@@ -375,8 +373,8 @@ async fn jetstream_subscribe_durable() {
 #[tokio::test]
 async fn jetstream_queue_subscribe() {
     let s = util::run_server("tests/configs/jetstream.conf");
-    let nc = nats::connect(&s.client_url()).await.unwrap();
-    let js = nats::jetstream::new(nc);
+    let nc = nats_aflowt::connect(&s.client_url()).await.unwrap();
+    let js = nats_aflowt::jetstream::new(nc);
 
     js.add_stream(&StreamConfig {
         name: "TEST".to_string(),
@@ -440,8 +438,8 @@ async fn jetstream_queue_subscribe() {
 #[tokio::test]
 async fn jetstream_flow_control() {
     let s = util::run_server("tests/configs/jetstream.conf");
-    let nc = nats::connect(&s.client_url()).await.unwrap();
-    let js = nats::jetstream::new(nc);
+    let nc = nats_aflowt::connect(&s.client_url()).await.unwrap();
+    let js = nats_aflowt::jetstream::new(nc);
 
     js.add_stream(&StreamConfig {
         name: "TEST".to_string(),
@@ -492,8 +490,8 @@ async fn jetstream_flow_control() {
 #[tokio::test]
 async fn jetstream_ordered() {
     let s = util::run_server("tests/configs/jetstream.conf");
-    let nc = nats::connect(&s.client_url()).await.unwrap();
-    let js = nats::jetstream::new(nc);
+    let nc = nats_aflowt::connect(&s.client_url()).await.unwrap();
+    let js = nats_aflowt::jetstream::new(nc);
 
     js.add_stream(&StreamConfig {
         name: "TEST".to_string(),

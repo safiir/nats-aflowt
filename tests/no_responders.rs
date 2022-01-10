@@ -12,13 +12,12 @@
 // limitations under the License.
 
 mod util;
-use nats_aflowt as nats;
 pub use util::*;
 
 #[tokio::test]
 async fn no_responders() {
     let s = util::run_basic_server();
-    let nc = nats::connect(&s.client_url())
+    let nc = nats_aflowt::connect(&s.client_url())
         .await
         .expect("could not connect");
     let res = nc.request("nobody-home", "hello").await;

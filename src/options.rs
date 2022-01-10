@@ -141,7 +141,7 @@ impl Options {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let options = nats::Options::new();
+    /// let options = nats_aflowt::Options::new();
     /// let nc = options.connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
@@ -156,7 +156,7 @@ impl Options {
     /// ```no_run
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::Options::with_token("t0k3n!")
+    /// let nc = nats_aflowt::Options::with_token("t0k3n!")
     ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
@@ -174,7 +174,7 @@ impl Options {
     /// ```no_run
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::Options::with_user_pass("derek", "s3cr3t!")
+    /// let nc = nats_aflowt::Options::with_user_pass("derek", "s3cr3t!")
     ///     .connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
@@ -196,7 +196,7 @@ impl Options {
     /// ```no_run
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::Options::with_credentials("path/to/my.creds")
+    /// let nc = nats_aflowt::Options::with_credentials("path/to/my.creds")
     ///     .connect("connect.ngs.global").await?;
     /// # Ok(())
     /// # }
@@ -248,7 +248,7 @@ impl Options {
     /// ------END USER NKEY SEED------
     /// ";
     ///
-    /// let nc = nats::Options::with_static_credentials(creds)
+    /// let nc = nats_aflowt::Options::with_static_credentials(creds)
     ///     .expect("failed to parse static creds")
     ///     .connect("connect.ngs.global").await?;
     /// # Ok(())
@@ -279,7 +279,7 @@ impl Options {
     ///     todo!()
     /// }
     ///
-    /// let nc = nats::Options::with_jwt(load_jwt, move |nonce| kp.sign(nonce).unwrap())
+    /// let nc = nats_aflowt::Options::with_jwt(load_jwt, move |nonce| kp.sign(nonce).unwrap())
     ///     .connect("localhost").await?;
     /// # std::io::Result::Ok(()) }
     /// ```
@@ -307,7 +307,7 @@ impl Options {
     /// let seed = "SUANQDPB2RUOE4ETUA26CNX7FUKE5ZZKFCQIIW63OX225F2CO7UEXTM7ZY";
     /// let kp = nkeys::KeyPair::from_seed(seed).unwrap();
     ///
-    /// let nc = nats::Options::with_nkey(nkey, move |nonce| kp.sign(nonce).unwrap())
+    /// let nc = nats_aflowt::Options::with_nkey(nkey, move |nonce| kp.sign(nonce).unwrap())
     ///     .connect("localhost").await?;
     /// # std::io::Result::Ok(()) }
     /// ```
@@ -336,7 +336,7 @@ impl Options {
     /// ```no_run
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::Options::new()
+    /// let nc = nats_aflowt::Options::new()
     ///     .client_cert("client-cert.pem", "client-key.pem")
     ///     .connect("nats://localhost:4443").await?;
     /// # Ok(())
@@ -362,18 +362,18 @@ impl Options {
        /// paths is not feasible.
        ///
        /// To avoid version conflicts, the `rustls` version
-       /// used by this crate is exported as `nats::rustls`.
+       /// used by this crate is exported as `nats_aflowt::rustls`.
        ///
        /// # Example
        /// ```no_run
        /// # fn main() -> std::io::Result<()> {
-       /// let mut tls_client_config = nats::rustls::ClientConfig::default();
+       /// let mut tls_client_config = nats_aflowt::rustls::ClientConfig::default();
        /// tls_client_config
        ///     .set_single_client_cert(
-       ///         vec![nats::rustls::Certificate(b"MY_CERT".to_vec())],
-       ///         nats::rustls::PrivateKey(b"MY_KEY".to_vec()),
+       ///         vec![nats_aflowt::rustls::Certificate(b"MY_CERT".to_vec())],
+       ///         nats_aflowt::rustls::PrivateKey(b"MY_KEY".to_vec()),
        ///     );
-       /// let nc = nats::Options::new()
+       /// let nc = nats_aflowt::Options::new()
        ///     .tls_client_config(tls_client_config)
        ///     .connect("nats://localhost:4443")?;
        /// # Ok(())
@@ -391,7 +391,7 @@ impl Options {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::Options::new()
+    /// let nc = nats_aflowt::Options::new()
     ///     .with_name("My App")
     ///     .connect("demo.nats.io").await?;
     /// # Ok(())
@@ -409,7 +409,7 @@ impl Options {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::Options::new()
+    /// let nc = nats_aflowt::Options::new()
     ///     .no_echo()
     ///     .connect("demo.nats.io").await?;
     /// # Ok(())
@@ -432,7 +432,7 @@ impl Options {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::Options::new()
+    /// let nc = nats_aflowt::Options::new()
     ///     .max_reconnects(3)
     ///     .connect("demo.nats.io").await?;
     /// # Ok(())
@@ -454,7 +454,7 @@ impl Options {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::Options::new()
+    /// let nc = nats_aflowt::Options::new()
     ///     .reconnect_buffer_size(64 * 1024)
     ///     .connect("demo.nats.io").await?;
     /// # Ok(())
@@ -476,7 +476,7 @@ impl Options {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let options = nats::Options::new();
+    /// let options = nats_aflowt::Options::new();
     /// let nc = options.connect("demo.nats.io").await?;
     /// # Ok(())
     /// # }
@@ -492,7 +492,7 @@ impl Options {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let options = nats::Options::new();
+    /// let options = nats_aflowt::Options::new();
     /// let nc = options.connect("nats://demo.nats.io:4222,tls://demo.nats.io:4443").await?;
     /// # Ok(())
     /// # }
@@ -511,8 +511,8 @@ impl Options {
     ///
     /// ```
     /// struct ErrCallback {}
-    /// impl nats::AsyncErrorCallback for ErrCallback {
-    ///     fn call(&self, si: nats::ServerInfo, err: std::io::Error) -> nats::BoxFuture<()> {
+    /// impl nats_aflowt::AsyncErrorCallback for ErrCallback {
+    ///     fn call(&self, si: nats_aflowt::ServerInfo, err: std::io::Error) -> nats_aflowt::BoxFuture<()> {
     ///         Box::pin(async move {
     ///             eprintln!("{} on connection {}", err, si.server_id);
     ///         })
@@ -520,7 +520,7 @@ impl Options {
     /// }
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::Options::new()
+    /// let nc = nats_aflowt::Options::new()
     ///     .error_callback(ErrCallback{})
     ///     .connect("demo.nats.io").await?;
     /// # Ok(())
@@ -544,8 +544,8 @@ impl Options {
     /// struct PrintCallback{
     ///     msg: String,
     /// }
-    /// impl nats::AsyncCall for PrintCallback {
-    ///     fn call(&self) -> nats::BoxFuture<()> {
+    /// impl nats_aflowt::AsyncCall for PrintCallback {
+    ///     fn call(&self) -> nats_aflowt::BoxFuture<()> {
     ///         let msg = self.msg.clone();
     ///         Box::pin(async move {
     ///              println!("{}", self.msg);
@@ -554,7 +554,7 @@ impl Options {
     /// }
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::Options::new()
+    /// let nc = nats_aflowt::Options::new()
     ///     .disconnect_callback(PrintCallback{msg: "connection has been lost".to_string()})
     ///     .connect("demo.nats.io").await?;
     /// # Ok(())
@@ -578,8 +578,8 @@ impl Options {
     /// struct PrintCallback{
     ///     msg: String,
     /// }
-    /// impl nats::AsyncCall for PrintCallback {
-    ///     fn call(&self) -> nats::BoxFuture<()> {
+    /// impl nats_aflowt::AsyncCall for PrintCallback {
+    ///     fn call(&self) -> nats_aflowt::BoxFuture<()> {
     ///         let msg = self.msg.clone();
     ///         Box::pin(async move {
     ///              println!("{}", self.msg);
@@ -588,7 +588,7 @@ impl Options {
     /// }
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::Options::new()
+    /// let nc = nats_aflowt::Options::new()
     ///     .reconnect_callback(PrintCallback{msg: "connection has been reestablished".to_string()})
     ///     .connect("demo.nats.io").await?;
     /// # Ok(())
@@ -613,8 +613,8 @@ impl Options {
     /// struct PrintCallback{
     ///     msg: String,
     /// }
-    /// impl nats::AsyncCall for PrintCallback {
-    ///     fn call(&self) -> nats::BoxFuture<()> {
+    /// impl nats_aflowt::AsyncCall for PrintCallback {
+    ///     fn call(&self) -> nats_aflowt::BoxFuture<()> {
     ///         let msg = self.msg.clone();
     ///         Box::pin(async move {
     ///              println!("{}", self.msg);
@@ -623,7 +623,7 @@ impl Options {
     /// }
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::Options::new()
+    /// let nc = nats_aflowt::Options::new()
     ///     .close_callback(PrintCallback{msg:"connection has been closed".to_string()})
     ///     .connect("demo.nats.io").await?;
     /// nc.drain().await.unwrap();
@@ -648,8 +648,8 @@ impl Options {
     /// struct PrintCallback{
     ///     msg: String,
     /// }
-    /// impl nats::AsyncCall for PrintCallback {
-    ///     fn call(&self) -> nats::BoxFuture<()> {
+    /// impl nats_aflowt::AsyncCall for PrintCallback {
+    ///     fn call(&self) -> nats_aflowt::BoxFuture<()> {
     ///         let msg = self.msg.clone();
     ///         Box::pin(async move {
     ///              println!("{}", self.msg);
@@ -658,7 +658,7 @@ impl Options {
     /// }
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::Options::new()
+    /// let nc = nats_aflowt::Options::new()
     ///     .lame_duck_callback(PrintCallback{msg:"server entered lame duck mode".to_string()})
     ///     .connect("demo.nats.io").await?;
     /// nc.drain().await.unwrap();
@@ -689,8 +689,8 @@ impl Options {
     /// ```
     /// use std::time::Duration;
     /// struct Backoff {}
-    /// impl nats::AsyncCallRet<usize, Duration> for Backoff {
-    ///     fn call(&self, reconnects: usize) -> nats::BoxFuture<Duration> {
+    /// impl nats_aflowt::AsyncCallRet<usize, Duration> for Backoff {
+    ///     fn call(&self, reconnects: usize) -> nats_aflowt::BoxFuture<Duration> {
     ///         Box::pin(
     ///             async move { Duration::from_millis(std::cmp::min((reconnects*100) as u64, 8000)) }
     ///         )
@@ -699,7 +699,7 @@ impl Options {
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// # use std::time::Duration;
-    /// let nc = nats::Options::new()
+    /// let nc = nats_aflowt::Options::new()
     ///     .reconnect_delay_callback(Backoff{})
     ///     .connect("demo.nats.io").await?;
     /// # Ok(())
@@ -724,7 +724,7 @@ impl Options {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::Options::new()
+    /// let nc = nats_aflowt::Options::new()
     ///     .tls_required(true)
     ///     .connect("tls://demo.nats.io:4443").await?;
     /// # Ok(())
@@ -744,7 +744,7 @@ impl Options {
     /// ```no_run
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// let nc = nats::Options::new()
+    /// let nc = nats_aflowt::Options::new()
     ///     .add_root_certificate("my-certs.pem")
     ///     .connect("tls://demo.nats.io:4443").await?;
     /// # Ok(())

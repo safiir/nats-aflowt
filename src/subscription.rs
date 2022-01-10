@@ -109,7 +109,7 @@ impl Subscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// # let sub1 = nc.subscribe("foo").await?;
     /// # let sub2 = nc.subscribe("bar").await?;
     /// # nc.publish("foo", "hello").await?;
@@ -138,7 +138,7 @@ impl Subscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// # let sub = nc.subscribe("foo").await?;
     /// # nc.publish("foo", "hello").await?;
     /// if let Some(msg) = sub.next().await {}
@@ -157,7 +157,7 @@ impl Subscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// # let sub = nc.subscribe("foo").await?;
     /// if let Some(msg) = sub.try_next().await {
     ///   println!("Received {}", msg);
@@ -176,7 +176,7 @@ impl Subscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// # let sub = nc.subscribe("foo").await?;
     /// if let Ok(message) = sub.next_timeout(std::time::Duration::from_secs(1)).await {
     ///     println!("Received {}", message);
@@ -206,7 +206,7 @@ impl Subscription {
     /// use futures::stream::StreamExt;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// let mut sub = nc.subscribe("foo").await?.messages();
     /// while let Some(msg) = sub.next().await {
     ///    // ...
@@ -235,7 +235,7 @@ impl Subscription {
     /// use futures::stream::StreamExt;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// let mut sub = nc.subscribe("foo").await?.stream();
     /// while let Some(msg) = sub.next().await {
     ///    // ...
@@ -257,7 +257,7 @@ impl Subscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// nc.subscribe("bar").await?.with_handler(move |msg| {
     ///     println!("Received {}", &msg);
     ///     Ok(())
@@ -299,7 +299,7 @@ impl Subscription {
     /// #![feature(async_closure)]
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// let sub = nc.subscribe("foo").await?
     ///      .with_async_handler( async move |m| { m.respond("ans=42").await?; Ok(()) });
     /// # Ok(())
@@ -331,7 +331,7 @@ impl Subscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// let sub = nc.subscribe("foo").await?;
     /// sub.unsubscribe().await?;
     /// # Ok(())
@@ -353,7 +353,7 @@ impl Subscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// let sub = nc.subscribe("foo").await?;
     /// sub.close().await?;
     /// # Ok(())
@@ -385,7 +385,7 @@ impl Subscription {
     /// # use std::time::Duration;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// let mut sub = nc.subscribe("test.drain").await?;
     ///
     /// nc.publish("test.drain", "message").await?;
@@ -416,7 +416,7 @@ impl Handler {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
     /// let sub = nc.subscribe("foo").await?.with_handler(move |msg| {
     ///     println!("Received {}", &msg);
     ///     Ok(())

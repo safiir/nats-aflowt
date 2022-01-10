@@ -1,6 +1,5 @@
 #![feature(async_closure)]
 
-use nats_aflowt as nats;
 use std::io;
 use std::time::Duration;
 
@@ -8,7 +7,7 @@ const RESPONSE_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[tokio::test]
 async fn request_multi() -> io::Result<()> {
-    let nc = nats::connect("demo.nats.io").await?;
+    let nc = nats_aflowt::connect("demo.nats.io").await?;
     nc.subscribe("foo")
         .await?
         .with_async_handler(async move |m| {

@@ -12,9 +12,7 @@
 // limitations under the License.
 
 mod util;
-use nats::AsyncCall;
-use nats::BoxFuture;
-use nats_aflowt as nats;
+use nats_aflowt::{AsyncCall, BoxFuture};
 pub use util::*;
 
 #[derive(Clone)]
@@ -39,7 +37,7 @@ async fn lame_duck_mode() {
     let (ltx, mut lrx) = tokio::sync::mpsc::channel(1);
 
     let s = util::run_basic_server();
-    let nc = nats::Options::new()
+    let nc = nats_aflowt::Options::new()
         .lame_duck_callback(LDCallback { ltx: ltx.clone() })
         .connect(s.client_url().as_str())
         .await

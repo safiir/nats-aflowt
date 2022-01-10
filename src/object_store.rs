@@ -118,11 +118,11 @@ impl JetStream {
     /// # Example
     ///
     /// ```
-    /// # use nats::object_store::Config;
+    /// # use nats_aflowt::object_store::Config;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
     /// #
     /// let bucket = context.create_object_store(&Config {
     ///   bucket: "create_object_store".to_string(),
@@ -174,11 +174,11 @@ impl JetStream {
     /// # Example
     ///
     /// ```
-    /// # use nats::object_store::Config;
+    /// # use nats_aflowt::object_store::Config;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
     /// #
     /// context.create_object_store(&Config {
     ///   bucket: "object_store".to_string(),
@@ -217,11 +217,11 @@ impl JetStream {
     /// # Example
     ///
     /// ```
-    /// use nats::object_store::Config;
+    /// use nats_aflowt::object_store::Config;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
     /// #
     /// # let bucket = context.create_object_store(&Config {
     /// #  bucket: "delete_object_store".to_string(),
@@ -407,11 +407,11 @@ impl ObjectStore {
     /// # Examples
     ///
     /// ```
-    /// # use nats::object_store::Config;
+    /// # use nats_aflowt::object_store::Config;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
     /// #
     /// let bucket = context.create_object_store(&Config {
     ///   bucket: "info".to_string(),
@@ -470,12 +470,12 @@ impl ObjectStore {
     /// # Example
     ///
     /// ```
-    /// # use nats::object_store::Config;
+    /// # use nats_aflowt::object_store::Config;
     /// # use tokio::io::AsyncReadExt as _;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
     /// #
     /// let bucket = context.create_object_store(&Config {
     ///   bucket: "put".to_string(),
@@ -582,11 +582,11 @@ impl ObjectStore {
     /// ```
     /// use std::io::Read as _;
     /// use tokio::io::AsyncReadExt as _;
-    /// # use nats::object_store::Config;
+    /// # use nats_aflowt::object_store::Config;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
     /// #
     /// let bucket = context.create_object_store(&Config {
     ///   bucket: "get".to_string(),
@@ -630,11 +630,11 @@ impl ObjectStore {
     ///
     /// ```
     /// use std::io::Read;
-    /// # use nats::object_store::Config;
+    /// # use nats_aflowt::object_store::Config;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
     /// #
     /// let bucket = context.create_object_store(&Config {
     ///   bucket: "delete".to_string(),
@@ -692,11 +692,11 @@ impl ObjectStore {
     ///
     /// ```no_run
     /// use futures::stream::StreamExt;
-    /// # use nats::object_store::Config;
+    /// # use nats_aflowt::object_store::Config;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats::connect("demo.nats.io").await?;
-    /// # let context = nats::jetstream::new(client);
+    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let context = nats_aflowt::jetstream::new(client);
     /// #
     /// let bucket = context.create_object_store(&Config {
     ///   bucket: "watch".to_string(),

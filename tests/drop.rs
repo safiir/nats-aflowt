@@ -11,7 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use nats_aflowt as nats;
 use std::io;
 
 mod util;
@@ -21,8 +20,8 @@ pub use util::*;
 async fn drop_flushes() -> io::Result<()> {
     let s = util::run_basic_server();
 
-    let nc1 = nats::connect(&s.client_url()).await?;
-    let nc2 = nats::connect(&s.client_url()).await?;
+    let nc1 = nats_aflowt::connect(&s.client_url()).await?;
+    let nc2 = nats_aflowt::connect(&s.client_url()).await?;
 
     let inbox = nc1.new_inbox();
     let sub = nc2.subscribe(&inbox).await?;
@@ -40,7 +39,7 @@ async fn drop_flushes() -> io::Result<()> {
 async fn two_connections() -> io::Result<()> {
     let s = util::run_basic_server();
 
-    let nc1 = nats::connect(&s.client_url()).await?;
+    let nc1 = nats_aflowt::connect(&s.client_url()).await?;
     let nc2 = nc1.clone();
 
     nc1.publish("foo", b"bar").await?;
@@ -58,7 +57,7 @@ async fn async_subscription_drop() -> io::Result<()> {
 
     let s = util::run_basic_server();
 
-    let nc = nats::connect(s.client_url()).await?;
+    let nc = nats_aflowt::connect(s.client_url()).await?;
     let inbox = nc.new_inbox();
 
     // This makes sure the subscription is closed after being dropped. If it wasn't closed,
