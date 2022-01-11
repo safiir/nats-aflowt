@@ -772,7 +772,7 @@ impl JetStream {
     /// use nats_aflowt::Stream;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// # let sub_name = format!("sub_{}", rand::random::<u64>());
     /// # context.add_stream(sub_name.as_str()).await?;
@@ -798,7 +798,7 @@ impl JetStream {
     /// # use nats_aflowt::jetstream::{ SubscribeOptions };
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let js = nats_aflowt::jetstream::new(nc);
     /// let sub = js.subscribe_with_options("foo",
     ///       &SubscribeOptions::bind("existing_stream".to_string(),
@@ -822,9 +822,9 @@ impl JetStream {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
-    /// # context.add_stream("queue");
+    /// # context.add_stream("queue").await;
     /// let subscription = context.queue_subscribe("queue", "queue_group").await?;
     /// # Ok(())
     /// # }
@@ -834,7 +834,8 @@ impl JetStream {
         subject: &str,
         queue: &str,
     ) -> io::Result<PushSubscription> {
-        self.do_push_subscribe(subject, Some(queue), None).await
+        self.do_push_subscribe(subject, Some(queue.to_string()), None)
+            .await
     }
 
     /// Creates a push-based consumer subscription with a queue group and options.
@@ -848,7 +849,7 @@ impl JetStream {
         queue: &str,
         options: &SubscribeOptions,
     ) -> io::Result<PushSubscription> {
-        self.do_push_subscribe(subject, Some(queue), Some(options))
+        self.do_push_subscribe(subject, Some(queue.to_string()), Some(options))
             .await
     }
 
@@ -902,7 +903,7 @@ impl JetStream {
     async fn do_push_subscribe(
         &self,
         subject: &str,
-        maybe_queue: Option<&str>,
+        maybe_queue: Option<String>,
         maybe_options: Option<&SubscribeOptions>,
     ) -> io::Result<PushSubscription> {
         // If no stream name is specified the subject cannot be empty.
@@ -1002,7 +1003,7 @@ impl JetStream {
             }
 
             if let Some(deliver_group) = info.config.deliver_group.as_ref() {
-                if let Some(queue) = maybe_queue {
+                if let Some(queue) = &maybe_queue {
                     if deliver_group != queue {
                         return Err(io::Error::new(
                             io::ErrorKind::Other,
@@ -1192,9 +1193,10 @@ impl JetStream {
         }?;
 
         // Figure out if we have a consumer name
+        #[allow(clippy::or_fun_call)]
         let maybe_durable_name = maybe_options
             .and_then(|options| options.durable_name.as_deref())
-            .or(maybe_queue);
+            .or(maybe_queue.as_deref());
 
         let maybe_consumer_name = maybe_options
             .and_then(|options| options.consumer_name.as_deref())
@@ -1266,7 +1268,7 @@ impl JetStream {
             config.filter_subject = subject.to_string();
 
             // Pass the queue to the consumer config
-            if let Some(queue) = maybe_queue {
+            if let Some(queue) = &maybe_queue {
                 if config.durable_name.is_none() {
                     config.durable_name = Some(queue.to_owned());
                 }
@@ -1329,8 +1331,8 @@ impl JetStream {
             .0
             .client
             .subscribe_with_preprocessor(
-                &deliver_subject,
-                maybe_queue,
+                deliver_subject,
+                maybe_queue.clone(),
                 Box::pin(preprocessor.clone()),
             )
             .await?;
@@ -1383,7 +1385,7 @@ impl JetStream {
                         .0
                         .client
                         .subscribe_with_preprocessor(
-                            deliver_subject,
+                            deliver_subject.to_string(),
                             maybe_queue,
                             Box::pin(preprocessor),
                         )

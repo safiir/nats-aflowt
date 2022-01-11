@@ -11,9 +11,9 @@ struct Person {
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     use futures::prelude::*;
-    let nc = nats_aflowt::connect("demo.nats.io")
+    let nc = nats_aflowt::connect("127.0.0.1:14222")
         .await
-        .expect("demo.nats.io");
+        .expect("127.0.0.1:14222");
     let subj = nc.new_inbox();
 
     let p = Person {

@@ -1,6 +1,6 @@
 [package]
 name = "nats-aflowt"
-version = "0.16.102"
+version = "0.16.103"
 description = "Unofficial port of NATS rust client to pure async"
 authors = ["client by NATS team", "async port by stevelr"]
 #authors = ["Derek Collison <derek@nats.io>", "Tyler Neely <tyler@nats.io>", "Stjepan Glavina <stjepan@nats.io>"]

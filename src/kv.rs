@@ -117,13 +117,13 @@ impl JetStream {
     /// # Example
     ///
     /// ```
-    /// # use nats_aflowt::kv::Config;
+    /// # use nats_aflowt::kv;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
-    /// context.create_key_value(&Config {
+    /// context.create_key_value(&kv::Config {
     ///   bucket: "key_value".to_string(),
     ///   ..Default::default()
     /// }).await?;
@@ -176,13 +176,13 @@ impl JetStream {
     /// # Examples
     ///
     /// ```
-    /// # use nats_aflowt::kv::Config;
+    /// # use nats_aflowt::kv;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
-    /// let bucket = context.create_key_value(&Config {
+    /// let bucket = context.create_key_value(&kv::Config {
     ///   bucket: "create_key_value".to_string(),
     ///   ..Default::default()
     /// }).await?;
@@ -255,13 +255,13 @@ impl JetStream {
     /// # Example
     ///
     /// ```
-    /// use nats_aflowt::kv::Config;
+    /// use nats_aflowt::kv;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
-    /// # let bucket = context.create_key_value(&Config {
+    /// # let bucket = context.create_key_value(&kv::Config {
     /// #  bucket: "delete_key_value".to_string(),
     /// #  ..Default::default()
     /// # }).await?;
@@ -335,13 +335,13 @@ impl Store {
     /// # Examples
     ///
     /// ```
-    /// # use nats_aflowt::kv::Config;
+    /// # use nats_aflowt::kv;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
-    /// # let bucket = context.create_key_value(&Config {
+    /// # let bucket = context.create_key_value(&kv::Config {
     /// #  bucket: "entry".to_string(),
     /// #  ..Default::default()
     /// # }).await?;
@@ -402,13 +402,13 @@ impl Store {
     /// # Examples
     ///
     /// ```
-    /// # use nats_aflowt::kv::Config;
+    /// # use nats_aflowt::kv;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
-    /// # let bucket = context.create_key_value(&Config {
+    /// # let bucket = context.create_key_value(&kv::Config {
     /// #  bucket: "get".to_string(),
     /// #  ..Default::default()
     /// # }).await?;
@@ -438,13 +438,13 @@ impl Store {
     /// # Examples
     ///
     /// ```
-    /// # use nats_aflowt::kv::Config;
+    /// # use nats_aflowt::kv;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
-    /// # let bucket = context.create_key_value(&Config {
+    /// # let bucket = context.create_key_value(&kv::Config {
     /// #  bucket: "get".to_string(),
     /// #  ..Default::default()
     /// # }).await?;
@@ -473,19 +473,20 @@ impl Store {
     /// # Examples
     ///
     /// ```
-    /// # use nats_aflowt::kv::Config;
+    /// # use nats_aflowt::kv;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
+    /// # let name = format!("bucket_create_{}", rand::random::<u64>());
     /// #
-    /// # let bucket = context.create_key_value(&Config {
-    /// #  bucket: "create".to_string(),
+    /// # let bucket = context.create_key_value(&kv::Config {
+    /// #  bucket: name.clone(),
     /// #  ..Default::default()
     /// # }).await?;
     /// #
-    /// bucket.purge("foo").await?;
     /// bucket.create("foo", b"bar").await?;
+    /// bucket.purge("foo").await?;
     /// #
     /// # Ok(())
     /// # }
@@ -511,13 +512,13 @@ impl Store {
     /// # Examples
     ///
     /// ```
-    /// # use nats_aflowt::kv::Config;
+    /// # use nats_aflowt::kv;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
-    /// # let bucket = context.create_key_value(&Config {
+    /// # let bucket = context.create_key_value(&kv::Config {
     /// #  bucket: "update".to_string(),
     /// #  ..Default::default()
     /// # }).await?;
@@ -561,13 +562,13 @@ impl Store {
     /// # Examples
     ///
     /// ```
-    /// # use nats_aflowt::kv::Config;
+    /// # use nats_aflowt::kv;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
-    /// # let bucket = context.create_key_value(&Config {
+    /// # let bucket = context.create_key_value(&kv::Config {
     /// #  bucket: "delete".to_string(),
     /// #  ..Default::default()
     /// # }).await?;
@@ -606,14 +607,14 @@ impl Store {
     /// # Examples
     ///
     /// ```
-    /// # use nats_aflowt::kv::Config;
+    /// # use nats_aflowt::kv;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
-    /// #
-    /// # let bucket = context.create_key_value(&Config {
-    /// #  bucket: "purge".to_string(),
+    /// # let name = format!("bucket_purge_{}", rand::random::<u64>());
+    /// # let bucket = context.create_key_value(&kv::Config {
+    /// #  bucket: name,
     /// #  ..Default::default()
     /// # }).await?;
     /// #
@@ -658,14 +659,14 @@ impl Store {
     /// # Examples
     ///
     /// ```
-    /// # use nats_aflowt::kv::Config;
+    /// # use nats_aflowt::kv;
     /// use futures::stream::StreamExt;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
-    /// # let bucket = context.create_key_value(&Config {
+    /// # let bucket = context.create_key_value(&kv::Config {
     /// #  bucket: "keys".to_string(),
     /// #  ..Default::default()
     /// # }).await?;
@@ -707,14 +708,14 @@ impl Store {
     /// # Examples
     ///
     /// ```
-    /// # use nats_aflowt::kv::Config;
+    /// # use nats_aflowt::kv;
     /// use futures::stream::StreamExt;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
-    /// let bucket = context.create_key_value(&Config {
+    /// let bucket = context.create_key_value(&kv::Config {
     ///   bucket: "history_iter".to_string(),
     ///   history: 2,
     ///   ..Default::default()

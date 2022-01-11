@@ -118,7 +118,7 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// # let name=format!("next_{}", rand::random::<u64>());
     /// # context.add_stream(name.as_str()).await?;
@@ -155,7 +155,7 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
     /// # context.add_stream("try_next").await?;
@@ -188,9 +188,11 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
-    /// # let subscription = context.subscribe("foo").await?;
+    /// # let name = format!("sub_{}", rand::random::<u64>());
+    /// # context.add_stream(name.as_str()).await?;
+    /// # let subscription = context.subscribe(name.as_str()).await?;
     /// if let Ok(message) = subscription.next_timeout(std::time::Duration::from_secs(1)).await {
     ///     println!("Received {}", message);
     /// }
@@ -231,7 +233,7 @@ impl PushSubscription {
     /// use futures::stream::StreamExt;
     /// #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// # context.add_stream("messages-100").await?;
     /// let mut subscription = context.subscribe("messages-100").await?.messages();
@@ -264,7 +266,7 @@ impl PushSubscription {
     /// use futures::stream::StreamExt;
     /// #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// # context.add_stream("stream").await?;
     /// let mut sub = context.subscribe("stream").await?.stream();
@@ -290,7 +292,7 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// # context.add_stream("with_handler").await?;
     /// context.subscribe("with_handler").await?.with_handler(move |message| {
@@ -335,16 +337,15 @@ impl PushSubscription {
     ///
     /// # Example
     /// ```
-    /// #![feature(async_closure)]
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// let sub = nc.subscribe("foo").await?
-    ///      .with_async_handler( async move |m| { m.respond("ans=42").await?; Ok(()) });
+    ///      .with_async_handler( move |m| async move { m.respond("ans=42").await?; Ok(()) });
     /// # Ok(())
     /// # }
     /// ```
-    #[allow(clippy::return_self_not_must_use)]
+    #[must_use]
     pub fn with_async_handler<F, T>(self, handler: F) -> Self
     where
         F: Fn(Message) -> T + 'static + Send + Sync,
@@ -374,7 +375,7 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// # context.add_stream("with_process_handler").await;
     /// context.subscribe("with_process_handler").await?.with_process_handler(|message| {
@@ -428,14 +429,13 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
-    /// # let sub_name=format!("process_{}", rand::random::<u64>());
+    /// # let sub_name = format!("process_{}", rand::random::<u64>());
     /// # context.add_stream(sub_name.as_str()).await?;
-    /// # context.publish(&sub_name, "hello").await?;
-    /// # context.publish(&sub_name, "hello2").await?;
-    /// #
     /// # let mut subscription = context.subscribe(&sub_name).await?;
+    /// # context.publish(&sub_name, "hello").await?;
+    /// #
     /// subscription.process(|message| {
     ///     println!("Received message {:?}", message);
     ///     Ok(())
@@ -444,14 +444,18 @@ impl PushSubscription {
     /// # }
     /// ```
     pub async fn process<R, F: Fn(&Message) -> io::Result<R>>(&mut self, f: F) -> io::Result<R> {
-        //TODO(ss): remove unwrap and return error if next() returns None
-        let next = self.next().await.unwrap();
-        let result = f(&next)?;
-        if self.0.consumer_ack_policy != AckPolicy::None {
-            next.ack().await?;
+        if let Some(next) = self.next().await {
+            let result = f(&next)?;
+            if self.0.consumer_ack_policy != AckPolicy::None {
+                next.ack().await?;
+            }
+            Ok(result)
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "process: unsubscribed",
+            ))
         }
-
-        Ok(result)
     }
 
     /// Process and acknowledge a single message, waiting up to timeout configured `timeout` before
@@ -465,7 +469,7 @@ impl PushSubscription {
     /// # use std::time::Duration;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// # context.add_stream("process_timeout").await?;
     /// # context.publish("process_timeout", "hello").await?;
@@ -501,7 +505,7 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
     /// # context.add_stream("foo").await?;
@@ -526,7 +530,7 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// # context.add_stream("unsubscribe").await?;
     /// #
@@ -578,7 +582,7 @@ impl PushSubscription {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// # context.add_stream("close").await?;
     /// let subscription = context.subscribe("close").await?;
@@ -590,8 +594,6 @@ impl PushSubscription {
         self.unsubscribe().await
     }
 
-    // TODO(ss): unexplained: I was getting hangs on this doc test, then I
-    //    changed the sub_name to have a random component and it seems to work
     /// Send an unsubscription then flush the connection,
     /// allowing any unprocessed messages to be handled
     /// by a handler function if one is configured.
@@ -609,9 +611,10 @@ impl PushSubscription {
     /// # Example
     ///
     /// ```
+    /// # use std::time::Duration;
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// # let sub_name = format!("drain_{}", rand::random::<u32>());
     /// # context.add_stream(sub_name.as_str()).await?;
@@ -622,8 +625,8 @@ impl PushSubscription {
     ///
     /// subscription.drain().await?;
     ///
-    /// assert!(subscription.next().await.is_none());
-    ///
+    /// # // there are no more messages in subscription
+    /// # assert!(subscription.next_timeout(Duration::from_secs(2)).await.is_err());
     /// # Ok(())
     /// # }
     /// ```
@@ -673,7 +676,7 @@ impl Handler {
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let nc = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let nc = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// let sub = nc.subscribe("foo").await?.with_handler(move |msg| {
     ///     println!("Received {}", &msg);
     ///     Ok(())

@@ -74,7 +74,7 @@ fn test_valid_bucket_name() {
     assert!(!is_valid_bucket_name(".99"));
     assert!(!is_valid_bucket_name("99."));
     assert!(!is_valid_bucket_name("*"));
-    assert!(!is_valid_bucket_name("Δ22"));
+    assert!(!is_valid_bucket_name("\u{20ac}")); // "€"
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn test_valid_object_name() {
     assert!(!is_valid_object_name(".99"));
     assert!(!is_valid_object_name("99."));
     assert!(!is_valid_object_name("*"));
-    assert!(!is_valid_object_name("Δ22"));
+    assert!(!is_valid_object_name("\u{20ac}")); // "€"
 }
 
 #[test]
@@ -118,13 +118,13 @@ impl JetStream {
     /// # Example
     ///
     /// ```
-    /// # use nats_aflowt::object_store::Config;
+    /// # use nats_aflowt::object_store;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
-    /// let bucket = context.create_object_store(&Config {
+    /// let bucket = context.create_object_store(&object_store::Config {
     ///   bucket: "create_object_store".to_string(),
     ///   ..Default::default()
     /// }).await?;
@@ -174,20 +174,20 @@ impl JetStream {
     /// # Example
     ///
     /// ```
-    /// # use nats_aflowt::object_store::Config;
+    /// # use nats_aflowt::object_store;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
-    /// #
-    /// context.create_object_store(&Config {
-    ///   bucket: "object_store".to_string(),
+    /// # let name = format!("bucket_object_store_{}", rand::random::<u64>());
+    /// let _ = context.create_object_store(&object_store::Config {
+    ///   bucket: name.clone(),
     ///   ..Default::default()
     /// }).await?;
     ///
-    /// let bucket = context.object_store("object_store").await?;
-    ///
-    /// # context.delete_object_store("object_store").await?;
+    /// // retrieve same bucket by its name
+    /// let bucket = context.object_store(&name).await?;
+    /// # context.delete_object_store(&name).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -220,7 +220,7 @@ impl JetStream {
     /// use nats_aflowt::object_store::Config;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
     /// # let bucket = context.create_object_store(&Config {
@@ -407,13 +407,13 @@ impl ObjectStore {
     /// # Examples
     ///
     /// ```
-    /// # use nats_aflowt::object_store::Config;
+    /// # use nats_aflowt::object_store;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
-    /// let bucket = context.create_object_store(&Config {
+    /// let bucket = context.create_object_store(&object_store::Config {
     ///   bucket: "info".to_string(),
     ///   ..Default::default()
     /// }).await?;
@@ -428,7 +428,7 @@ impl ObjectStore {
     /// # }
     /// ```
     pub async fn info(&self, object_name: &str) -> io::Result<ObjectInfo> {
-        // LoOkup the stream to get the bound subject.
+        // Lookup the stream to get the bound subject.
         let object_name = sanitize_object_name(object_name);
         if !is_valid_object_name(&object_name) {
             return Err(io::Error::new(
@@ -470,14 +470,14 @@ impl ObjectStore {
     /// # Example
     ///
     /// ```
-    /// # use nats_aflowt::object_store::Config;
+    /// # use nats_aflowt::object_store;
     /// # use tokio::io::AsyncReadExt as _;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
-    /// let bucket = context.create_object_store(&Config {
+    /// let bucket = context.create_object_store(&object_store::Config {
     ///   bucket: "put".to_string(),
     ///   ..Default::default()
     /// }).await?;
@@ -582,13 +582,13 @@ impl ObjectStore {
     /// ```
     /// use std::io::Read as _;
     /// use tokio::io::AsyncReadExt as _;
-    /// # use nats_aflowt::object_store::Config;
+    /// # use nats_aflowt::object_store;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
-    /// let bucket = context.create_object_store(&Config {
+    /// let bucket = context.create_object_store(&object_store::Config {
     ///   bucket: "get".to_string(),
     ///   ..Default::default()
     /// }).await?;
@@ -630,13 +630,13 @@ impl ObjectStore {
     ///
     /// ```
     /// use std::io::Read;
-    /// # use nats_aflowt::object_store::Config;
+    /// # use nats_aflowt::object_store;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
-    /// let bucket = context.create_object_store(&Config {
+    /// let bucket = context.create_object_store(&object_store::Config {
     ///   bucket: "delete".to_string(),
     ///   ..Default::default()
     /// }).await?;
@@ -692,13 +692,13 @@ impl ObjectStore {
     ///
     /// ```no_run
     /// use futures::stream::StreamExt;
-    /// # use nats_aflowt::object_store::Config;
+    /// # use nats_aflowt::object_store;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
-    /// # let client = nats_aflowt::connect("demo.nats.io").await?;
+    /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
-    /// let bucket = context.create_object_store(&Config {
+    /// let bucket = context.create_object_store(&object_store::Config {
     ///   bucket: "watch".to_string(),
     ///   ..Default::default()
     /// }).await?;

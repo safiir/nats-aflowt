@@ -1,10 +1,63 @@
 This is an unofficial fork and is Alpha status
 
+# C0.16.103
+
+- Now builds and passes clippy on stable (1.57) and nightly (1.60).
+
+### Fixes
+
+ - got rid of all async closures which prevented builds in stable.
+   When using `with_async_handler`, the syntax is:
+      with_async_handler( move |m| async move { .... } )
+ - worked around rustc compiler bug in 1.57 (trait lifetimes);
+ - removed unwrap() from PushSubscription::process
+
+### changed most tests to use local nats-server instead of demo.nats.io
+
+  - tests on `demo.nats.io` started failing with an error about too many streams,
+    so switched to running tests locally.
+  - The script `./run-tests.sh` starts a nats-server (in docker) with jetstream
+    on 127.0.0.1:14222, runs all tests, then stops the container.
+    It doesn't use port 4222 because some of the tests start a nats-server on that
+    port.
+  - This adds a dependency on `nc` and `docker`
+  - Accordingly, most occurrences of 'demo.nats.io' in the
+  tests have been changed to 127.0.0.1:14222. 
+
+### test cleanup and fixes
+
+  - minor cleanup for some tests in subscription, and added some
+  assertions
+  - fixed bug in doc test for PushSubscription::next_timeout
+  (wasn't adding stream before calling subscribe)
+  - fixed hang in subscription.drain() test by changing next() to
+  next_timeout()
+
+### test failures
+
+  - I'm seeing intermittent test hangs in some jetstream doc tests for
+  ObjectStore, KV, and PushSubscription.
+  - On most runs, all tests pass. Sometimes there's a single failure,
+  but each time the test that fails is different. These are the ones
+  I've seen:
+    - jststream::PushSubscription::process
+    - jststream::PushSubscription::close
+    - jststream::PushSubscription::unsubscribe
+    - jststream::PushSubscription::with_process_handler
+    - jetstream::ObjectStore::delete_object_store
+    - jetstream::ObjectStore::get
+    - jetstream::ObjectStore::put
+    - jetstream::kv::Store::history
+  - since kv and object_store are marked 'unstable' in the original crate,
+  I don't know how much to worry about these.
+
 # 0.16.102
+
   - changed crate references in tests and examples from nats:: to nats_aflowt::
   - fixed paths in Cargo.toml and README.md
 
 # 0.16.101 
+
   - merged prs 287-292
   - all functionality current as of nats.rs d22329c (main branch, jan 7, 2022)
   - added tests/request_multi.rs

@@ -53,8 +53,8 @@ pub(crate) struct Connector {
 }
 
 /// load tls certs. This function uses blocking file io.
-/// load_native_certs could load a 300KB file (per docs.rs/rustls-native-certs)
-fn load_tls_certs(tls_options: Arc<Options>) -> io::Result<ClientConfig> {
+/// `load_native_certs` could load a 300KB file (per docs.rs/rustls-native-certs)
+fn load_tls_certs(tls_options: &Arc<Options>) -> io::Result<ClientConfig> {
     // Include system root certificates.
     //
     // On Windows, some certificates cannot be loaded by rustls
@@ -103,7 +103,8 @@ impl Connector {
         options: Arc<Options>,
     ) -> io::Result<Connector> {
         let tls_options = options.clone();
-        let tls_config = tokio::task::spawn_blocking(move || load_tls_certs(tls_options)).await??;
+        let tls_config =
+            tokio::task::spawn_blocking(move || load_tls_certs(&tls_options)).await??;
 
         let connector = Connector {
             attempts: urls.into_iter().map(|url| (url, 0)).collect(),

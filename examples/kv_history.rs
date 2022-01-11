@@ -5,7 +5,7 @@ use nats_aflowt::kv::Config;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let client = nats_aflowt::connect("demo.nats.io").await?;
+    let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     let context = nats_aflowt::jetstream::new(client);
 
     let bucket = context

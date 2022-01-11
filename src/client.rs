@@ -11,7 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//use async_trait::async_trait;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::io::{self, Error, ErrorKind};
@@ -22,7 +21,6 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-//use crossbeam_channel as channel;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::{io::BufReader, io::BufWriter, sync::Mutex};
 
@@ -88,24 +86,12 @@ struct ReadState {
 }
 
 /// A handler for preprocess messages for a subscription as they arrive over the wire.
-//#[async_trait]
-//pub(crate) trait Preprocessor: Send + Sync {
-//    async fn process(&self, sid: u64, msg: &Message) -> bool;
-//}
-//#[async_trait]
 pub(crate) trait Preprocessor: Send + Sync {
     fn process<'proc>(&'proc self, sid: u64, msg: &'proc Message) -> BoxFuture<'proc, bool>;
 }
 
 #[derive(Debug, Default, Clone)]
 struct NoProcessing {}
-//#[async_trait]
-//impl<'p> Preprocessor for NoProcessing {
-//    async fn process(&self, _sid: u64, _msg: &Message) -> bool {
-//        false
-//    }
-//}
-//#[async_trait]
 impl<'p> Preprocessor for NoProcessing {
     fn process(&self, _sid: u64, _msg: &Message) -> BoxFuture<'static, bool> {
         Box::pin(async { false })
@@ -394,18 +380,22 @@ impl Client {
     pub(crate) async fn subscribe(
         &self,
         subject: &str,
-        queue_group: Option<&str>,
+        queue_group: Option<String>,
     ) -> io::Result<(u64, crate::subscription::SubscriptionReceiver<Message>)> {
         // Inject random delays when testing.
-        self.subscribe_with_preprocessor(subject, queue_group, Box::pin(NoProcessing::default()))
-            .await
+        self.subscribe_with_preprocessor(
+            subject.to_string(),
+            queue_group,
+            Box::pin(NoProcessing::default()),
+        )
+        .await
     }
 
     /// Subscribe to a subject with a message preprocessor.
-    pub(crate) async fn subscribe_with_preprocessor<'a>(
+    pub(crate) async fn subscribe_with_preprocessor(
         &self,
-        subject: &str,
-        queue_group: Option<&str>,
+        subject: String,
+        queue_group: Option<String>,
         message_processor: Pin<Box<dyn Preprocessor>>,
     ) -> io::Result<(u64, crate::subscription::SubscriptionReceiver<Message>)> {
         inject_delay().await;
@@ -422,9 +412,10 @@ impl Client {
 
         // If connected, send a SUB operation.
         if let Some(writer) = write.writer.as_mut() {
+            let queue_group = queue_group.as_ref();
             let op = ClientOp::Sub {
-                subject,
-                queue_group,
+                subject: &subject,
+                queue_group: queue_group.map(|s| s.as_str()),
                 sid,
             };
             proto::encode(writer, op).await?;
@@ -436,8 +427,8 @@ impl Client {
         read.subscriptions.insert(
             sid,
             Subscription {
-                subject: subject.to_string(),
-                queue_group: queue_group.map(ToString::to_string),
+                subject,
+                queue_group,
                 messages: sender,
                 preprocess: message_processor,
             },

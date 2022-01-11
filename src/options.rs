@@ -142,7 +142,7 @@ impl Options {
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// let options = nats_aflowt::Options::new();
-    /// let nc = options.connect("demo.nats.io").await?;
+    /// let nc = options.connect("127.0.0.1:14222").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -157,7 +157,7 @@ impl Options {
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats_aflowt::Options::with_token("t0k3n!")
-    ///     .connect("demo.nats.io").await?;
+    ///     .connect("127.0.0.1:14222").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -175,7 +175,7 @@ impl Options {
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats_aflowt::Options::with_user_pass("derek", "s3cr3t!")
-    ///     .connect("demo.nats.io").await?;
+    ///     .connect("127.0.0.1:14222").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -393,7 +393,7 @@ impl Options {
     /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats_aflowt::Options::new()
     ///     .with_name("My App")
-    ///     .connect("demo.nats.io").await?;
+    ///     .connect("127.0.0.1:14222").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -411,7 +411,7 @@ impl Options {
     /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats_aflowt::Options::new()
     ///     .no_echo()
-    ///     .connect("demo.nats.io").await?;
+    ///     .connect("127.0.0.1:14222").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -434,7 +434,7 @@ impl Options {
     /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats_aflowt::Options::new()
     ///     .max_reconnects(3)
-    ///     .connect("demo.nats.io").await?;
+    ///     .connect("127.0.0.1:14222").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -456,7 +456,7 @@ impl Options {
     /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats_aflowt::Options::new()
     ///     .reconnect_buffer_size(64 * 1024)
-    ///     .connect("demo.nats.io").await?;
+    ///     .connect("127.0.0.1:14222").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -477,7 +477,7 @@ impl Options {
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
     /// let options = nats_aflowt::Options::new();
-    /// let nc = options.connect("demo.nats.io").await?;
+    /// let nc = options.connect("127.0.0.1:14222").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -522,7 +522,7 @@ impl Options {
     /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats_aflowt::Options::new()
     ///     .error_callback(ErrCallback{})
-    ///     .connect("demo.nats.io").await?;
+    ///     .connect("127.0.0.1:14222").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -556,7 +556,7 @@ impl Options {
     /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats_aflowt::Options::new()
     ///     .disconnect_callback(PrintCallback{msg: "connection has been lost".to_string()})
-    ///     .connect("demo.nats.io").await?;
+    ///     .connect("127.0.0.1:14222").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -590,7 +590,7 @@ impl Options {
     /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats_aflowt::Options::new()
     ///     .reconnect_callback(PrintCallback{msg: "connection has been reestablished".to_string()})
-    ///     .connect("demo.nats.io").await?;
+    ///     .connect("127.0.0.1:14222").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -625,7 +625,7 @@ impl Options {
     /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats_aflowt::Options::new()
     ///     .close_callback(PrintCallback{msg:"connection has been closed".to_string()})
-    ///     .connect("demo.nats.io").await?;
+    ///     .connect("127.0.0.1:14222").await?;
     /// nc.drain().await.unwrap();
     /// # Ok(())
     /// # }
@@ -660,7 +660,7 @@ impl Options {
     /// # async fn main() -> std::io::Result<()> {
     /// let nc = nats_aflowt::Options::new()
     ///     .lame_duck_callback(PrintCallback{msg:"server entered lame duck mode".to_string()})
-    ///     .connect("demo.nats.io").await?;
+    ///     .connect("127.0.0.1:14222").await?;
     /// nc.drain().await.unwrap();
     /// # Ok(())
     /// # }
@@ -701,7 +701,7 @@ impl Options {
     /// # use std::time::Duration;
     /// let nc = nats_aflowt::Options::new()
     ///     .reconnect_delay_callback(Backoff{})
-    ///     .connect("demo.nats.io").await?;
+    ///     .connect("127.0.0.1:14222").await?;
     /// # Ok(())
     /// # }
     /// ```
