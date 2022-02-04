@@ -1,5 +1,12 @@
 This is an unofficial fork and is Alpha status
 
+# 0.16.104
+
+- removed chrono crate due to known security flaw in chrono:
+  - https://rustsec.org/advisories/RUSTSEC-2020-0159
+- chrono has been replaced with the `time` crate
+- added opentracing
+
 # 0.16.103
 
 - Now builds and passes clippy on stable (1.57) and nightly (1.60).

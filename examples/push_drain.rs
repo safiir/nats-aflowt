@@ -13,7 +13,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     subscription.drain().await?;
 
-    assert!(subscription.next().await.is_none());
+    assert!(subscription.next().await.is_none(), "subscription ended");
 
     println!("done");
     Ok(())

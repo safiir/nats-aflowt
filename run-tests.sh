@@ -13,7 +13,7 @@
 TEST_NAME="${@:---all}"
 
 if nc -czt -w1 127.0.0.1 14222; then
-  cargo test $TEST_NAME -- --nocapture --color always
+  cargo test $TEST_NAME -- --nocapture --color always  --show-output
 else
   docker rm -f nats-local-test
   docker run --pull=always --rm -d --name nats-local-test -p 127.0.0.1:14222:4222 nats:2.6 -js

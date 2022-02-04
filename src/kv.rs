@@ -15,18 +15,17 @@
 //! This feature is experimental and the API may change.
 
 use futures::StreamExt;
-use std::io;
-use std::pin::Pin;
-use std::time::Duration;
+use std::{io, pin::Pin, time::Duration};
 
-use crate::header::{self, HeaderMap};
-use crate::jetstream::{
-    DateTime, Error, ErrorCode, JetStream, StorageType, StreamConfig, StreamInfo, StreamMessage,
-    SubscribeOptions,
+use crate::{
+    header::{self, HeaderMap},
+    jetstream::{
+        DateTime, Error, ErrorCode, JetStream, StorageType, StreamConfig, StreamInfo,
+        StreamMessage, SubscribeOptions,
+    },
 };
 
-use crate::message::Message;
-use crate::Stream;
+use crate::{message::Message, Stream};
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashSet;
@@ -834,6 +833,10 @@ impl Keys {
                     if operation != Operation::Put {
                         continue;
                     }
+                    //if message.data.is_empty() {
+                    //    self.done = true;
+                    //    break;
+                    //}
 
                     if let Some(m) = message
                         .subject

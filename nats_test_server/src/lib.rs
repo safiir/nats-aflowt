@@ -409,7 +409,7 @@ impl Client {
 
         match parts.next().unwrap() {
             "PONG" => {
-                assert!(self.outstanding_pings > 0);
+                assert!(self.outstanding_pings > 0, "pings remaining");
                 self.outstanding_pings -= 1;
                 assert_eq!(parts.next(), None);
                 ClientAction::None

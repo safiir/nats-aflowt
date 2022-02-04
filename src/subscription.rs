@@ -11,16 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::Stream;
-use std::io;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
+use crate::{client::Client, message::Message, Stream};
+#[cfg(not(feature = "otel"))]
+use log::trace;
+use std::{io, pin::Pin, sync::Arc, thread, time::Duration};
 use tokio::sync::Mutex;
-
-use crate::client::Client;
-use crate::message::Message;
+#[cfg(feature = "otel")]
+use tracing::trace;
 
 #[derive(Debug)]
 struct Inner {
@@ -57,15 +54,28 @@ impl<T> SubscriptionReceiver<T> {
     /// Receives the next value. Returns None if the channel has been closed
     /// and there are no more values.
     pub async fn recv(&self) -> Option<T> {
+        trace!("sub receiver entering recv ..");
         let mut receiver = self.inner.lock().await;
-        receiver.recv().await
+        trace!("sub receiver blocking ..");
+        let x = receiver.recv().await;
+        trace!("sub receiver unblocked");
+        x
     }
 
     /// Return Some(message) if a message is available,
     /// or None if there are no messages available,
     /// or the subscription has been closed or client disconnected.
     pub async fn try_recv(&self) -> Option<T> {
-        let mut receiver = self.inner.lock().await;
+        trace!("sub receiver try_recv ..");
+
+        let mut receiver =
+            match tokio::time::timeout(Duration::from_secs(10), self.inner.lock()).await {
+                Err(_) => {
+                    panic!("try_recv in subscription failed to get inner lock in 10 secs");
+                }
+                Ok(g) => g,
+            };
+        //let mut receiver = self.inner.lock().await;
         match receiver.try_recv() {
             Ok(m) => Some(m),
             Err(_) => None,

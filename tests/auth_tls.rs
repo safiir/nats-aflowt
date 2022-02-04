@@ -11,8 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io;
-use std::path::PathBuf;
+use std::{io, path::PathBuf};
 
 mod util;
 pub use util::*;
@@ -20,8 +19,6 @@ pub use util::*;
 #[tokio::test]
 async fn basic_tls() -> io::Result<()> {
     let s = util::run_server("tests/configs/tls.conf");
-
-    assert!(nats_aflowt::connect("nats://127.0.0.1").await.is_err());
 
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 

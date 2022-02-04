@@ -12,16 +12,26 @@
 // limitations under the License.
 
 use crate::Stream;
-use std::io;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
+#[cfg(not(feature = "otel"))]
+use log::debug;
+use std::{
+    io,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    thread,
+    time::Duration,
+};
+#[cfg(feature = "otel")]
+use tracing::debug;
 
-use crate::jetstream::{AckPolicy, ConsumerInfo, ConsumerOwnership, JetStream};
-use crate::message::Message;
-use crate::DEFAULT_FLUSH_TIMEOUT;
+use crate::{
+    jetstream::{AckPolicy, ConsumerInfo, ConsumerOwnership, JetStream},
+    message::Message,
+    DEFAULT_FLUSH_TIMEOUT,
+};
 
 #[derive(Debug)]
 pub(crate) struct Inner {
@@ -167,15 +177,27 @@ impl PushSubscription {
     /// # }
     /// ```
     pub async fn try_next(&self) -> Option<Message> {
+        let mut count = 0;
         loop {
+            debug!("push_subscription try_next loop, count={}", count);
             match self.0.messages.try_recv().await {
                 Some(message) => {
+                    debug!(
+                        "push_subscription try_next got msg {} bytes",
+                        message.data.len(),
+                    );
+
                     if self.should_skip(&message).await {
+                        debug!("push_subscription try_next skipping");
+                        count = count + 1;
                         continue;
                     }
                     return Some(message);
                 }
-                None => return None,
+                None => {
+                    debug!("push_subscription try_next sub done");
+                    return None;
+                }
             }
         }
     }
@@ -444,17 +466,18 @@ impl PushSubscription {
     /// # }
     /// ```
     pub async fn process<R, F: Fn(&Message) -> io::Result<R>>(&mut self, f: F) -> io::Result<R> {
-        if let Some(next) = self.next().await {
-            let result = f(&next)?;
-            if self.0.consumer_ack_policy != AckPolicy::None {
-                next.ack().await?;
+        match self.next().await {
+            Some(next) => {
+                let result = f(&next)?;
+                if self.0.consumer_ack_policy != AckPolicy::None {
+                    next.ack().await?;
+                }
+                Ok(result)
             }
-            Ok(result)
-        } else {
-            Err(io::Error::new(
+            _ => Err(io::Error::new(
                 io::ErrorKind::Other,
                 "process: unsubscribed",
-            ))
+            )),
         }
     }
 
@@ -626,7 +649,7 @@ impl PushSubscription {
     /// subscription.drain().await?;
     ///
     /// # // there are no more messages in subscription
-    /// # assert!(subscription.next_timeout(Duration::from_secs(2)).await.is_err());
+    /// # assert!(subscription.next_timeout(Duration::from_secs(2)).await.is_err(), "emtpy");
     /// # Ok(())
     /// # }
     /// ```

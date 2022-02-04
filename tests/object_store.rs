@@ -20,6 +20,7 @@ use tokio::io::AsyncReadExt;
 mod util;
 
 #[tokio::test]
+#[tracing::instrument]
 async fn object_random() {
     let server = util::run_server("tests/configs/jetstream.conf");
     let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
@@ -118,6 +119,7 @@ async fn object_random() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn object_sealed() {
     let server = util::run_server("tests/configs/jetstream.conf");
     let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
@@ -138,6 +140,7 @@ async fn object_sealed() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn object_delete() {
     let server = util::run_server("tests/configs/jetstream.conf");
     let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
@@ -158,7 +161,7 @@ async fn object_delete() {
     let stream_info = context.stream_info("OBJ_OBJECTS").await.unwrap();
 
     // We should have one message left. The delete marker.
-    assert_eq!(stream_info.state.messages, 1);
+    assert_eq!(stream_info.state.messages, 1, "delete marker");
 
     // Make sure we have a delete marker, this will be there to drive Watch functionality.
     let object_info = bucket.info("A").await.unwrap();
@@ -166,6 +169,7 @@ async fn object_delete() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn object_multiple_delete() {
     let server = util::run_server("tests/configs/jetstream.conf");
     let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
@@ -203,6 +207,7 @@ async fn object_multiple_delete() {
 //   - Doc test for put() succeeds using very similar code
 #[cfg(feature = "failing_tests")]
 #[tokio::test]
+#[tracing::instrument]
 async fn object_names() {
     let server = util::run_server("tests/configs/jetstream.conf");
     let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
@@ -231,6 +236,7 @@ async fn object_names() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn object_watch() {
     use futures::stream::StreamExt as _;
     let server = util::run_server("tests/configs/jetstream.conf");
@@ -252,12 +258,12 @@ async fn object_watch() {
 
     let info = watch.next().await.unwrap();
     assert_eq!(info.name, "foo");
-    assert_eq!(info.size, bytes.len());
+    assert_eq!(info.size, bytes.len(), "foo size");
 
     let bytes = vec![1, 2, 3, 4, 5];
     bucket.put("bar", &mut bytes.as_slice()).await.unwrap();
 
     let info = watch.next().await.unwrap();
     assert_eq!(info.name, "bar");
-    assert_eq!(info.size, bytes.len());
+    assert_eq!(info.size, bytes.len(), "bar size");
 }

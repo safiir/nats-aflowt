@@ -11,9 +11,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::fs;
-use std::io::{self, BufReader, ErrorKind};
-use std::path::Path;
+use std::{
+    fs,
+    io::{self, BufReader, ErrorKind},
+    path::Path,
+};
 
 use crate::tokio_rustls::rustls::{Certificate, PrivateKey};
 use nkeys::KeyPair;

@@ -11,28 +11,45 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt;
-use std::io::{self, Error, ErrorKind};
-use std::mem;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
-
-use tokio::io::{AsyncWrite, AsyncWriteExt};
-use tokio::{io::BufReader, io::BufWriter, sync::Mutex};
-
-use crate::connector::{Connector, NatsStream, ServerAddress};
-use crate::message::Message;
-use crate::proto::{self, ClientOp, ServerOp};
-use crate::BoxFuture;
-use crate::{header::HeaderMap, inject_delay, inject_io_failure, Options, ServerInfo};
+use crate::{
+    connector::{Connector, NatsStream, ServerAddress},
+    header::HeaderMap,
+    inject_delay, inject_io_failure,
+    message::Message,
+    proto::{self, ClientOp, ServerOp},
+    BoxFuture, Options, ServerInfo,
+};
+#[cfg(not(feature = "otel"))]
+use log::{error, trace};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    fmt,
+    io::{self, Error, ErrorKind},
+    mem,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    task::{Context, Poll},
+    time::{Duration, Instant},
+};
+use tokio::{
+    io::{AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
+    sync::Mutex,
+};
+#[cfg(feature = "otel")]
+use tracing::{error, trace};
 
 const BUF_CAPACITY: usize = 32 * 1024;
 /// maximum messages to queue before applying backpressure
 const MAX_SUBSCRIPTION_QUEUE: usize = 650;
+
+const PING_FLUSH_TIMEOUT_SEC: u64 = 40;
+
+// TODO(dlc) - Make configurable.
+const PING_INTERVAL: Duration = Duration::from_secs(20); // was 120 sec
+const MAX_PINGS_OUT: u8 = 2;
 
 /// Client state.
 ///
@@ -125,12 +142,13 @@ pub struct Client {
 impl Client {
     /// Creates a new client that will begin connecting in the background.
     pub(crate) async fn connect(urls: Vec<ServerAddress>, options: Options) -> io::Result<Client> {
+        crate::init_tracing();
         // A channel for coordinating flushes.
-        let (flush_kicker, mut flush_wanted) = tokio::sync::mpsc::channel(1);
+        let (flush_kicker, mut flush_wanted) = tokio::sync::mpsc::channel(10);
 
         // Channels for coordinating initial connect.
         let (run_sender, run_receiver) = tokio::sync::oneshot::channel();
-        let (pong_sender, mut pong_receiver) = tokio::sync::mpsc::channel(1);
+        let (pong_sender, mut pong_receiver) = tokio::sync::mpsc::channel(10);
 
         // The client state.
         let _client = Client {
@@ -202,20 +220,22 @@ impl Client {
             const MIN_FLUSH_BETWEEN: Duration = Duration::from_millis(5);
 
             // Handle recv timeouts and check if we should send a PING.
-            // TODO(dlc) - Make configurable.
-            const PING_INTERVAL: Duration = Duration::from_secs(2 * 60);
-            const MAX_PINGS_OUT: u8 = 2;
 
             let mut last = Instant::now() - MIN_FLUSH_BETWEEN;
 
             // Wait until at least one message is buffered.
             loop {
+                trace!("client flush thread loop");
                 if tokio::time::timeout(PING_INTERVAL, flush_wanted.recv())
                     .await
                     .is_ok()
                 {
                     let since = last.elapsed();
                     if since < MIN_FLUSH_BETWEEN {
+                        trace!(
+                            "client ping sleeping {} ms",
+                            (MIN_FLUSH_BETWEEN - since).as_millis()
+                        );
                         tokio::time::sleep(MIN_FLUSH_BETWEEN - since).await;
                     }
 
@@ -225,6 +245,7 @@ impl Client {
                     if let Some(writer) = write.writer.as_mut() {
                         // If flushing fails, disconnect.
                         if writer.flush().await.is_err() {
+                            trace!("client ping flush failed, disconnecting");
                             last = Instant::now();
                             let _ = writer.shutdown().await;
                             write.writer = None;
@@ -237,13 +258,21 @@ impl Client {
                     drop(write);
                 } else {
                     // timeout
+                    trace!("client ping timer");
+                    let dbg_pings_out;
+                    let dbg_pongs;
+                    let mut dbg_shutdown = false;
+                    let mut dbg_flushed = false;
+                    let mut dbg_flush_err = false;
                     let mut write = client.state.write.lock().await;
                     let mut read = client.state.read.lock().await;
 
                     if read.pings_out >= MAX_PINGS_OUT {
                         if let Some(writer) = write.writer.as_mut() {
+                            dbg_shutdown = true;
                             writer.get_mut().shutdown().await;
                         }
+                        trace!("client too many pings_out, clearing pongs");
                         write.writer = None;
                         read.pongs.clear();
                     } else if read.last_active.elapsed() > PING_INTERVAL {
@@ -253,18 +282,31 @@ impl Client {
                         if let Some(mut writer) = write.writer.as_mut() {
                             // Ok to ignore errors here.
                             let _ = proto::encode(&mut writer, ClientOp::Ping).await;
+                            dbg_flushed = true;
                             if writer.flush().await.is_err() {
+                                dbg_flush_err = true;
                                 // NB see locking protocol for state.write and state.read
                                 writer.shutdown().await.ok();
+                                dbg_shutdown = true;
                                 write.writer = None;
+                                trace!("client clearing pongs due to flush err");
                                 read.pongs.clear();
                             }
                         }
                     }
+                    dbg_pings_out = read.pings_out;
+                    dbg_pongs = read.pongs.len();
 
                     // NB see locking protocol for state.write and state.read
                     drop(read);
                     drop(write);
+                    trace!("client ping timer: pings_out:{} pongs:{} shutdown:{} flushed:{} flush_err:{}",
+                        dbg_pings_out,
+                        dbg_pongs,
+                        dbg_shutdown,
+                        dbg_flushed,
+                        dbg_flush_err,
+                    );
                 }
             }
         });
@@ -280,6 +322,7 @@ impl Client {
     /// Makes a round trip to the server to ensure buffered messages reach it.
     pub(crate) async fn flush(&self, timeout: Duration) -> io::Result<()> {
         let mut pong = {
+            trace!("flush start");
             // Inject random delays when testing.
             inject_delay().await;
 
@@ -304,26 +347,44 @@ impl Client {
                 }
             }
 
+            // (ss) added
+            if let Err(e) = write.flush_kicker.send(()).await {
+                trace!("error triggering flush {}", e);
+            }
             // Enqueue an expected PONG.
             let mut read = self.state.read.lock().await;
+            trace!("client queuing pong");
             read.pongs.push_back(sender);
+            trace!("client pong has been queued");
 
             // NB see locking protocol for state.write and state.read
             drop(read);
             drop(write);
+            trace!("flush done");
 
             receiver
         };
 
         // Wait until the PONG operation is received.
-        match pong.recv().await {
-            Some(()) => Ok(()),
-            None => Err(Error::new(ErrorKind::ConnectionReset, "flush failed")),
+        match tokio::time::timeout(Duration::from_secs(PING_FLUSH_TIMEOUT_SEC), pong.recv()).await {
+            Err(_) => {
+                error!("ping flush timed out after {} sec", PING_FLUSH_TIMEOUT_SEC);
+                Err(Error::new(ErrorKind::ConnectionReset, "flush failed"))
+            }
+            Ok(Some(())) => Ok(()),
+            Ok(None) => {
+                error!("ping sender quit unexpectedly");
+                Err(Error::new(
+                    ErrorKind::ConnectionReset,
+                    "flush failed - ping sender quit",
+                ))
+            }
         }
     }
 
     /// Closes the client.
     pub(crate) async fn close(&self) {
+        trace!("closing client");
         // Inject random delays when testing.
         inject_delay().await;
 
@@ -544,6 +605,11 @@ impl Client {
         headers: Option<&HeaderMap>,
         msg: &[u8],
     ) -> io::Result<()> {
+        trace!(
+            "publishing subject '{}', reply_to '{}'",
+            subject,
+            reply_to.unwrap_or("")
+        );
         // Inject random delays when testing.
         inject_delay().await;
 

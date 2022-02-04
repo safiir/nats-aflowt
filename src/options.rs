@@ -11,21 +11,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::cmp;
-use std::convert::TryInto;
-use std::fmt;
-use std::io;
-use std::io::Error;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    cmp,
+    convert::TryInto,
+    fmt, io,
+    io::Error,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
-use crate::auth_utils;
-use crate::rustls::WantsCipherSuites;
-use crate::secure_wipe::SecureString;
-use crate::BoxFuture;
-use crate::Connection;
-use crate::IntoServerList;
+use crate::{
+    auth_utils, rustls::WantsCipherSuites, secure_wipe::SecureString, BoxFuture, Connection,
+    IntoServerList,
+};
 
 /// Connect options.
 pub struct Options {

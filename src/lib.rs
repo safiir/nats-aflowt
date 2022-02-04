@@ -192,32 +192,19 @@
     clippy::module_name_repetitions
 )]
 
-/// Async-enabled NATS client.
-//pub mod _asynk;
 mod auth_utils;
 mod client;
 mod connect;
 mod connector;
+pub mod header;
 mod message;
 mod options;
 mod proto;
 mod secure_wipe;
 mod subscription;
-
-/// Header constants and types.
-pub mod header;
-
-pub use futures::future::BoxFuture;
-/// Stream, as used by this crate. re-export of `futures::Stream`
-pub use futures::Stream;
-
-/// `JetStream` stream management and consumers.
+pub use futures::{future::BoxFuture, Stream}; // re-export of futures::Stream
 pub mod jetstream;
-
-#[cfg_attr(docsrs, doc(cfg(feature = "unstable")))]
 pub mod kv;
-
-#[cfg_attr(docsrs, doc(cfg(feature = "unstable")))]
 pub mod object_store;
 
 #[cfg(feature = "fault_injection")]
@@ -427,6 +414,7 @@ impl Connection {
     where
         I: IntoServerList,
     {
+        crate::init_tracing();
         let urls = urls.into_server_list()?;
         let client = Client::connect(urls, options).await?;
         client.flush(DEFAULT_FLUSH_TIMEOUT).await?;
@@ -902,6 +890,47 @@ impl Connection {
             .try_publish(subject, reply, headers, msg.as_ref())
             .await
     }
+}
+
+#[cfg(feature = "otel")]
+static TRACING_STARTED: once_cell::sync::OnceCell<bool> = once_cell::sync::OnceCell::new();
+
+#[cfg(not(feature = "otel"))]
+pub fn init_tracing() {}
+#[cfg(feature = "otel")]
+pub fn init_tracing() {
+    //use tracing_subscriber::layer::SubscriberExt as _;
+    TRACING_STARTED.get_or_init(|| {
+        /*
+        let tracer = opentelemetry_otlp::new_pipeline()
+            .tracing()
+            .with_exporter(
+                opentelemetry_otlp::new_exporter()
+                    .tonic()
+                    .with_endpoint("http://127.0.0.1:4317"),
+            )
+            .install_batch(opentelemetry::runtime::Tokio)
+            .expect("init_tracer");
+         */
+        //let tracer = opentelemetry::global::tracer("ex.com/basic");
+        //let otel_layer = OpenTelemetryLayer::new(tracer);
+        //let subscriber = tracing_subscriber::Registry::default().with(otel_layer);
+
+        //let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+        //let subscriber = tracing_subscriber::Registry::default().with(telemetry);
+
+        // a builder for `FmtSubscriber`.
+        let subscriber = tracing_subscriber::FmtSubscriber::builder()
+            // all spans/events with a level higher than TRACE (e.g, debug, info, warn, etc.)
+            // will be written to stdout.
+            .with_max_level(tracing::Level::TRACE)
+            // completes the builder.
+            .finish();
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("failed setting default tracing");
+        tracing::info!("Hello! tracing initialized");
+        true
+    });
 }
 
 /*

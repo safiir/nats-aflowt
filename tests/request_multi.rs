@@ -1,5 +1,4 @@
-use std::io;
-use std::time::Duration;
+use std::{io, time::Duration};
 
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(1);
 
