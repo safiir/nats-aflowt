@@ -1,5 +1,10 @@
 This is an unofficial fork and is Alpha status
 
+# 0.16.104
+
+- updated nkeys dependency to 0.2.0
+- prevent panic if stream shutdown called while there are holders of the connection
+
 # 0.16.103
 
 - Now builds and passes clippy on stable (1.57) and nightly (1.60).
