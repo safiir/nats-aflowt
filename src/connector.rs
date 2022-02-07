@@ -413,14 +413,18 @@ impl NatsStream {
 
     /// Will attempt to shutdown the underlying stream.
     pub(crate) async fn shutdown(&mut self) {
-        match Arc::<Flavor>::get_mut(&mut self.flavor).unwrap() {
-            Flavor::Tcp(tcp) => {
+        match Arc::<Flavor>::get_mut(&mut self.flavor) {
+            Some(Flavor::Tcp(tcp)) => {
                 let tcp = tcp.get_mut();
                 let _ = tcp.shutdown().await;
             }
-            Flavor::Tls(tls) => {
+            Some(Flavor::Tls(tls)) => {
                 let tls = tls.get_mut();
                 let _ = tls.get_mut().0.shutdown().await;
+            }
+            None => {
+                // more than one Arc holder: can't shut down yet
+                log::warn!("connection shutdown deferred");
             }
         }
     }
