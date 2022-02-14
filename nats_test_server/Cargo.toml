@@ -9,12 +9,12 @@ license = "Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rand = "0.7.3"
+rand = "0.8"
 log = "0.4.11"
 serde_json = "1.0.59"
 serde = "1.0.117"
 serde_derive = "1.0.117"
-env_logger = "0.8.1"
+env_logger = "0.9"
 
 [dev-dependencies]
-nats = { path = ".." }
+nats-aflowt = { path = ".." }

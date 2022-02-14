@@ -799,13 +799,13 @@ impl Connection {
     /// let received = Arc::new(AtomicBool::new(false));
     /// let received_2 = received.clone();
     ///
-    /// nc.subscribe("test.drain").await?.with_handler(move |m| {
+    /// let h = nc.subscribe("test.drain").await?.with_handler(move |m| {
     ///     received_2.store(true, SeqCst);
     ///     Ok(())
     /// });
     ///
     /// nc.publish("test.drain", "message").await?;
-    /// nc.drain().await?;
+    /// nc.drain().await;
     ///
     /// # tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     ///

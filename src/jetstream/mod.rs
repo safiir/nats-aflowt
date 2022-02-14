@@ -563,7 +563,7 @@ impl crate::client::Preprocessor for SubscriptionPreprocessor {
                     .and_then(|headers| {
                         headers
                             .get(header::NATS_CONSUMER_STALLED)
-                            .map(|set| set.iter().cloned().next())
+                            .map(|set| set.iter().next().cloned())
                     })
                     .flatten();
 
@@ -585,7 +585,7 @@ impl crate::client::Preprocessor for SubscriptionPreprocessor {
                     .and_then(|headers| {
                         headers
                             .get(header::NATS_LAST_CONSUMER)
-                            .map(|set| set.iter().cloned().next())
+                            .map(|set| set.iter().next().cloned())
                     })
                     .flatten();
 
@@ -709,7 +709,6 @@ impl JetStream {
                     .inner
                     .entry(header::NATS_MSG_ID.to_string())
                     .or_insert_with(HashSet::default);
-
                 entry.insert(v.to_string());
             }
 
@@ -718,7 +717,6 @@ impl JetStream {
                     .inner
                     .entry(header::NATS_EXPECTED_LAST_MSG_ID.to_string())
                     .or_insert_with(HashSet::default);
-
                 entry.insert(v.to_string());
             }
 
@@ -727,7 +725,6 @@ impl JetStream {
                     .inner
                     .entry(header::NATS_EXPECTED_STREAM.to_string())
                     .or_insert_with(HashSet::default);
-
                 entry.insert(v.to_string());
             }
 
@@ -736,7 +733,6 @@ impl JetStream {
                     .inner
                     .entry(header::NATS_EXPECTED_LAST_SEQUENCE.to_string())
                     .or_insert_with(HashSet::default);
-
                 entry.insert(v.to_string());
             }
 
@@ -745,7 +741,6 @@ impl JetStream {
                     .inner
                     .entry(header::NATS_EXPECTED_LAST_SUBJECT_SEQUENCE.to_string())
                     .or_insert_with(HashSet::default);
-
                 entry.insert(v.to_string());
             }
 

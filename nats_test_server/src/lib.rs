@@ -4,8 +4,7 @@ use std::{
     fmt::Display,
     io::{Read, Write},
     mem::ManuallyDrop,
-    net::SocketAddr,
-    net::{TcpListener, TcpStream, ToSocketAddrs},
+    net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -551,8 +550,8 @@ fn test_pub_sub_2_clients() {
     env_logger::init();
     let server = NatsTestServer::build().spawn();
 
-    let conn1 = nats::connect(&server.address().to_string()).unwrap();
-    let conn2 = nats::connect(&server.address().to_string()).unwrap();
+    let conn1 = nats - aflowt::connect(&server.address().to_string()).unwrap();
+    let conn2 = nats - aflowt::connect(&server.address().to_string()).unwrap();
 
     let sub = conn1.subscribe("*").unwrap();
     conn2.publish("subject", "message").unwrap();

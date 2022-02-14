@@ -346,8 +346,7 @@ impl Store {
     /// # }).await?;
     /// #
     /// bucket.put("foo", b"bar").await?;
-    /// let maybe_entry = bucket.entry("foo").await?;
-    /// if let Some(entry) = maybe_entry {
+    /// if let Some(entry) = bucket.entry("foo").await? {
     ///   println!("Found entry {:?}", entry);
     /// }
     /// #
@@ -390,7 +389,6 @@ impl Store {
                         }
                     }
                 }
-
                 Err(err)
             }
         }

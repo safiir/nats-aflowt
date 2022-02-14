@@ -12,37 +12,29 @@
 // limitations under the License.
 
 use async_trait::async_trait;
-use std::{
-    borrow::Borrow,
-    collections::HashMap,
-    convert::TryFrom,
-    io::{self, Error, ErrorKind},
-    net::{SocketAddr, ToSocketAddrs},
-    ops::DerefMut,
-    pin::Pin,
-    str::FromStr,
-    sync::Arc,
-    task::{Context, Poll},
-};
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf},
-    net::TcpStream,
-    sync::Mutex,
-};
+use std::borrow::Borrow;
+use std::collections::HashMap;
+use std::convert::TryFrom;
+use std::io::{self, Error, ErrorKind};
+use std::net::{SocketAddr, ToSocketAddrs};
+use std::ops::DerefMut;
+use std::pin::Pin;
+use std::str::FromStr;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
+use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 use url::Url;
 
 //use tokio_rustls::webpki::DnsNameRef;
 
-use crate::{
-    auth_utils,
-    connect::ConnectInfo,
-    inject_io_failure,
-    proto::{self, ClientOp, ServerOp},
-    rustls::{ClientConfig, ServerName},
-    secure_wipe::SecureString,
-    tokio_rustls::client::TlsStream,
-    AuthStyle, Options, ServerInfo,
-};
+use crate::auth_utils;
+use crate::proto::{self, ClientOp, ServerOp};
+use crate::rustls::{ClientConfig, /* ClientConnection, */ ServerName};
+use crate::secure_wipe::SecureString;
+use crate::tokio_rustls::client::TlsStream;
+use crate::{connect::ConnectInfo, inject_io_failure, AuthStyle, Options, ServerInfo};
 
 /// Maintains a list of servers and establishes connections.
 ///
@@ -110,7 +102,6 @@ impl Connector {
         urls: Vec<ServerAddress>,
         options: Arc<Options>,
     ) -> io::Result<Connector> {
-        crate::init_tracing();
         let tls_options = options.clone();
         let tls_config =
             tokio::task::spawn_blocking(move || load_tls_certs(&tls_options)).await??;
@@ -423,9 +414,6 @@ impl NatsStream {
     /// Will attempt to shutdown the underlying stream.
     pub(crate) async fn shutdown(&mut self) {
         match Arc::<Flavor>::get_mut(&mut self.flavor) {
-            None => {
-                eprintln!("warning: attempt to call shutdown on nats connection while >1 connection or subscription is still open");
-            }
             Some(Flavor::Tcp(tcp)) => {
                 let tcp = tcp.get_mut();
                 let _ = tcp.shutdown().await;
@@ -433,6 +421,10 @@ impl NatsStream {
             Some(Flavor::Tls(tls)) => {
                 let tls = tls.get_mut();
                 let _ = tls.get_mut().0.shutdown().await;
+            }
+            None => {
+                // more than one Arc holder: can't shut down yet
+                log::warn!("connection shutdown deferred");
             }
         }
     }

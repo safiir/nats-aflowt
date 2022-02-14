@@ -12,12 +12,8 @@
 // limitations under the License.
 
 use crate::{client::Client, message::Message, Stream};
-#[cfg(not(feature = "otel"))]
-use log::trace;
-use std::{io, pin::Pin, sync::Arc, thread, time::Duration};
+use std::{io, pin::Pin, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
-#[cfg(feature = "otel")]
-use tracing::trace;
 
 #[derive(Debug)]
 struct Inner {
@@ -25,6 +21,7 @@ struct Inner {
     pub(crate) sid: u64,
 
     /// Subject.
+    #[allow(dead_code)]
     pub(crate) subject: String,
 
     /// MSG operations received from the server.
@@ -54,11 +51,8 @@ impl<T> SubscriptionReceiver<T> {
     /// Receives the next value. Returns None if the channel has been closed
     /// and there are no more values.
     pub async fn recv(&self) -> Option<T> {
-        trace!("sub receiver entering recv ..");
         let mut receiver = self.inner.lock().await;
-        trace!("sub receiver blocking ..");
         let x = receiver.recv().await;
-        trace!("sub receiver unblocked");
         x
     }
 
@@ -66,8 +60,6 @@ impl<T> SubscriptionReceiver<T> {
     /// or None if there are no messages available,
     /// or the subscription has been closed or client disconnected.
     pub async fn try_recv(&self) -> Option<T> {
-        trace!("sub receiver try_recv ..");
-
         let mut receiver =
             match tokio::time::timeout(Duration::from_secs(10), self.inner.lock()).await {
                 Err(_) => {
@@ -310,24 +302,24 @@ impl Subscription {
     /// ```
     pub fn with_handler<F>(self, handler: F) -> Handler
     where
-        F: Fn(Message) -> io::Result<()> + Send + 'static,
+        F: Fn(Message) -> io::Result<()> + Send + Sync + 'static,
     {
+        let sub = self.clone();
+        let handler = Arc::new(handler);
+        tokio::spawn(async move {
+            while let Some(m) = sub.next().await {
+                let handler = handler.clone();
+                // just in case the handler blocks, we need to use blocking thread pool
+                let _ = tokio::task::spawn_blocking(move || {
+                    if let Err(e) = handler(m) {
+                        // TODO(dlc) - Capture for last error?
+                        log::error!("Error in callback! {:?}", e);
+                    }
+                });
+            }
+        });
         // This will allow us to not have to capture the return. When it is
         // dropped it will not unsubscribe from the server.
-        let sub = self.clone();
-        thread::Builder::new()
-            .name(format!("nats_subscriber_{}_{}", self.0.sid, self.0.subject))
-            .spawn(move || {
-                futures::executor::block_on(async {
-                    while let Some(m) = sub.next().await {
-                        if let Err(e) = handler(m) {
-                            // TODO(dlc) - Capture for last error?
-                            log::error!("Error in callback! {:?}", e);
-                        }
-                    }
-                })
-            })
-            .expect("threads should be spawn-able");
         Handler { sub: self }
     }
 
@@ -358,12 +350,16 @@ impl Subscription {
         T: futures::Future<Output = io::Result<()>> + Send,
     {
         let sub = self.clone();
+        let handler = Arc::new(handler);
         tokio::spawn(async move {
             while let Some(m) = sub.next().await {
-                if let Err(e) = handler(m).await {
-                    // TODO(dlc) - Capture for last error?
-                    log::error!("Error in callback! {:?}", e);
-                }
+                let handler = handler.clone();
+                let _ = tokio::spawn(async move {
+                    if let Err(e) = handler(m).await {
+                        // TODO(dlc) - Capture for last error?
+                        log::error!("Error in callback! {:?}", e);
+                    }
+                });
             }
         });
         self
