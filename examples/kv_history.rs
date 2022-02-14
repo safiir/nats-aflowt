@@ -1,11 +1,17 @@
 // example taken from doc for kv::Store::history
 //
 use futures::stream::StreamExt;
+#[cfg(not(feature = "otel"))]
+use log::info;
 use nats_aflowt::kv::Config;
+#[cfg(feature = "otel")]
+use tracing::info;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let client = nats_aflowt::connect("127.0.0.1:14222").await?;
+    nats_aflowt::init_tracing();
+    info!("hello from kv_history");
+    let client = nats_aflowt::connect("127.0.0.1:4222").await?;
     let context = nats_aflowt::jetstream::new(client);
 
     let bucket = context

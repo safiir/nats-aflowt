@@ -1,9 +1,20 @@
 This is an unofficial fork and is Alpha status
 
+# 0.16.105
+
+- added tokio::spaws around subscription handlers
+  to avoid hang in case handler does blocking io
+- removed some verbose trace logs
+- pudate dependencies
+- replaced chrono with time due to known security flaw in chrono:
+  - https://rustsec.org/advisories/RUSTSEC-2020-0159
+- added opentracing- requires feature "otel"
+
 # 0.16.104
 
 - updated nkeys dependency to 0.2.0
-- prevent panic if stream shutdown called while there are holders of the connection
+- prevent panic if stream called while there are holders of the
+  connection
 
 # 0.16.103
 

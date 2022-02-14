@@ -12,7 +12,6 @@
 // limitations under the License.
 
 use crate::jetstream::AckKind;
-use chrono::{TimeZone, Utc};
 use std::{
     fmt, io,
     sync::{
@@ -20,6 +19,7 @@ use std::{
         Arc,
     },
 };
+use time::OffsetDateTime;
 
 use crate::{
     client::Client,
@@ -331,8 +331,8 @@ impl Message {
                 stream_seq: try_parse!(),
                 consumer_seq: try_parse!(),
                 published: {
-                    let nanos: i64 = try_parse!();
-                    Utc.timestamp_nanos(nanos)
+                    let nanos: i128 = try_parse!();
+                    OffsetDateTime::from_unix_timestamp_nanos(nanos).ok()?
                 },
                 pending: try_parse!(),
                 token: if n_tokens >= 9 {
@@ -353,8 +353,8 @@ impl Message {
                 stream_seq: try_parse!(),
                 consumer_seq: try_parse!(),
                 published: {
-                    let nanos: i64 = try_parse!();
-                    Utc.timestamp_nanos(nanos)
+                    let nanos: i128 = try_parse!();
+                    OffsetDateTime::from_unix_timestamp_nanos(nanos).ok()?
                 },
                 pending: try_parse!(),
                 token: None,

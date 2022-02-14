@@ -11,28 +11,45 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt;
-use std::io::{self, Error, ErrorKind};
-use std::mem;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
-
-use tokio::io::{AsyncWrite, AsyncWriteExt};
-use tokio::{io::BufReader, io::BufWriter, sync::Mutex};
-
-use crate::connector::{Connector, NatsStream, ServerAddress};
-use crate::message::Message;
-use crate::proto::{self, ClientOp, ServerOp};
-use crate::BoxFuture;
-use crate::{header::HeaderMap, inject_delay, inject_io_failure, Options, ServerInfo};
+use crate::{
+    connector::{Connector, NatsStream, ServerAddress},
+    header::HeaderMap,
+    inject_delay, inject_io_failure,
+    message::Message,
+    proto::{self, ClientOp, ServerOp},
+    BoxFuture, Options, ServerInfo,
+};
+#[cfg(not(feature = "otel"))]
+use log::{debug, error};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    fmt,
+    io::{self, Error, ErrorKind},
+    mem,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    task::{Context, Poll},
+    time::{Duration, Instant},
+};
+use tokio::{
+    io::{AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
+    sync::Mutex,
+};
+#[cfg(feature = "otel")]
+use tracing::{debug, error};
 
 const BUF_CAPACITY: usize = 32 * 1024;
 /// maximum messages to queue before applying backpressure
 const MAX_SUBSCRIPTION_QUEUE: usize = 650;
+
+const PING_FLUSH_TIMEOUT_SEC: u64 = 40;
+
+// TODO(dlc) - Make configurable.
+const PING_INTERVAL: Duration = Duration::from_secs(20); // was 120 sec
+const MAX_PINGS_OUT: u8 = 2;
 
 /// Client state.
 ///
@@ -125,12 +142,13 @@ pub struct Client {
 impl Client {
     /// Creates a new client that will begin connecting in the background.
     pub(crate) async fn connect(urls: Vec<ServerAddress>, options: Options) -> io::Result<Client> {
+        crate::init_tracing();
         // A channel for coordinating flushes.
-        let (flush_kicker, mut flush_wanted) = tokio::sync::mpsc::channel(1);
+        let (flush_kicker, mut flush_wanted) = tokio::sync::mpsc::channel(10);
 
         // Channels for coordinating initial connect.
         let (run_sender, run_receiver) = tokio::sync::oneshot::channel();
-        let (pong_sender, mut pong_receiver) = tokio::sync::mpsc::channel(1);
+        let (pong_sender, mut pong_receiver) = tokio::sync::mpsc::channel(10);
 
         // The client state.
         let _client = Client {
@@ -202,9 +220,6 @@ impl Client {
             const MIN_FLUSH_BETWEEN: Duration = Duration::from_millis(5);
 
             // Handle recv timeouts and check if we should send a PING.
-            // TODO(dlc) - Make configurable.
-            const PING_INTERVAL: Duration = Duration::from_secs(2 * 60);
-            const MAX_PINGS_OUT: u8 = 2;
 
             let mut last = Instant::now() - MIN_FLUSH_BETWEEN;
 
@@ -304,6 +319,9 @@ impl Client {
                 }
             }
 
+            if let Err(e) = write.flush_kicker.send(()).await {
+                debug!("error triggering flush {}", e);
+            }
             // Enqueue an expected PONG.
             let mut read = self.state.read.lock().await;
             read.pongs.push_back(sender);
@@ -316,9 +334,21 @@ impl Client {
         };
 
         // Wait until the PONG operation is received.
-        match pong.recv().await {
-            Some(()) => Ok(()),
-            None => Err(Error::new(ErrorKind::ConnectionReset, "flush failed")),
+        match tokio::time::timeout(Duration::from_secs(PING_FLUSH_TIMEOUT_SEC), pong.recv()).await {
+            Err(_) => {
+                // if socket is closed, don't fail
+                //error!("ping flush timed out after {} sec", PING_FLUSH_TIMEOUT_SEC);
+                //Err(Error::new(ErrorKind::ConnectionReset, "flush failed"))
+                Ok(())
+            }
+            Ok(Some(())) => Ok(()),
+            Ok(None) => {
+                error!("ping sender quit unexpectedly");
+                Err(Error::new(
+                    ErrorKind::ConnectionReset,
+                    "flush failed - ping sender quit",
+                ))
+            }
         }
     }
 

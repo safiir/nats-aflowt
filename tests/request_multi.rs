@@ -1,9 +1,9 @@
-use std::io;
-use std::time::Duration;
+use std::{io, time::Duration};
 
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[tokio::test]
+#[ignore]
 async fn request_multi() -> io::Result<()> {
     let nc = nats_aflowt::connect("127.0.0.1:14222").await?;
     nc.subscribe("foo")

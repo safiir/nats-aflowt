@@ -13,8 +13,10 @@
 
 #![allow(clippy::float_arithmetic)]
 
-use std::io::{self, Error, ErrorKind};
-use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+use std::{
+    io::{self, Error, ErrorKind},
+    sync::atomic::{AtomicUsize, Ordering::Relaxed},
+};
 
 /// This function is useful for inducing random jitter into our operations that
 /// trigger cross-thread communication, shaking out more possible interleavings

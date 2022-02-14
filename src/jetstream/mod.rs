@@ -100,11 +100,11 @@
 //!
 
 use crate::{BoxFuture, Stream};
+#[cfg(not(feature = "otel"))]
+use log::{debug, error};
 use pin_project::pin_project;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::{
     collections::{HashSet, VecDeque},
     convert::TryFrom,
@@ -112,9 +112,15 @@ use std::{
     fmt::Debug,
     io::{self, ErrorKind},
     pin::Pin,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 use tokio::sync::Mutex;
+#[cfg(feature = "otel")]
+use tracing::{debug, error};
 
 const ORDERED_IDLE_HEARTBEAT: Duration = Duration::from_nanos(5_000_000_000);
 
@@ -557,15 +563,20 @@ impl crate::client::Preprocessor for SubscriptionPreprocessor {
                     .and_then(|headers| {
                         headers
                             .get(header::NATS_CONSUMER_STALLED)
-                            .map(|set| set.iter().cloned().next())
+                            .map(|set| set.iter().next().cloned())
                     })
                     .flatten();
 
                 if let Some(consumer_stalled) = maybe_consumer_stalled {
-                    self.context
+                    debug!("publish on stalled idle heartbeat");
+                    if let Some(Err(e)) = self
+                        .context
                         .connection
                         .try_publish_with_reply_or_headers(&consumer_stalled, None, None, b"")
-                        .await;
+                        .await
+                    {
+                        error!("try_publish errored: {}", e);
+                    }
                 }
 
                 let maybe_consumer_seq = message
@@ -574,7 +585,7 @@ impl crate::client::Preprocessor for SubscriptionPreprocessor {
                     .and_then(|headers| {
                         headers
                             .get(header::NATS_LAST_CONSUMER)
-                            .map(|set| set.iter().cloned().next())
+                            .map(|set| set.iter().next().cloned())
                     })
                     .flatten();
 
@@ -698,7 +709,6 @@ impl JetStream {
                     .inner
                     .entry(header::NATS_MSG_ID.to_string())
                     .or_insert_with(HashSet::default);
-
                 entry.insert(v.to_string());
             }
 
@@ -707,7 +717,6 @@ impl JetStream {
                     .inner
                     .entry(header::NATS_EXPECTED_LAST_MSG_ID.to_string())
                     .or_insert_with(HashSet::default);
-
                 entry.insert(v.to_string());
             }
 
@@ -716,7 +725,6 @@ impl JetStream {
                     .inner
                     .entry(header::NATS_EXPECTED_STREAM.to_string())
                     .or_insert_with(HashSet::default);
-
                 entry.insert(v.to_string());
             }
 
@@ -725,7 +733,6 @@ impl JetStream {
                     .inner
                     .entry(header::NATS_EXPECTED_LAST_SEQUENCE.to_string())
                     .or_insert_with(HashSet::default);
-
                 entry.insert(v.to_string());
             }
 
@@ -734,7 +741,6 @@ impl JetStream {
                     .inner
                     .entry(header::NATS_EXPECTED_LAST_SUBJECT_SEQUENCE.to_string())
                     .or_insert_with(HashSet::default);
-
                 entry.insert(v.to_string());
             }
 
@@ -1751,6 +1757,10 @@ impl JetStream {
         Res: DeserializeOwned,
     {
         let res_msg = self.connection.request(subject, req).await?;
+        assert!(
+            !res_msg.data.is_empty(),
+            "js_request received empty response"
+        );
         let res: ApiResponse<Res> = serde_json::de::from_slice(&res_msg.data)?;
         match res {
             ApiResponse::Ok(stream_info) => Ok(stream_info),

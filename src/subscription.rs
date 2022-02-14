@@ -11,16 +11,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::Stream;
-use std::io;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
+use crate::{client::Client, message::Message, Stream};
+use std::{io, pin::Pin, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
-
-use crate::client::Client;
-use crate::message::Message;
 
 #[derive(Debug)]
 struct Inner {
@@ -28,6 +21,7 @@ struct Inner {
     pub(crate) sid: u64,
 
     /// Subject.
+    #[allow(dead_code)]
     pub(crate) subject: String,
 
     /// MSG operations received from the server.
@@ -58,14 +52,22 @@ impl<T> SubscriptionReceiver<T> {
     /// and there are no more values.
     pub async fn recv(&self) -> Option<T> {
         let mut receiver = self.inner.lock().await;
-        receiver.recv().await
+        let x = receiver.recv().await;
+        x
     }
 
     /// Return Some(message) if a message is available,
     /// or None if there are no messages available,
     /// or the subscription has been closed or client disconnected.
     pub async fn try_recv(&self) -> Option<T> {
-        let mut receiver = self.inner.lock().await;
+        let mut receiver =
+            match tokio::time::timeout(Duration::from_secs(10), self.inner.lock()).await {
+                Err(_) => {
+                    panic!("try_recv in subscription failed to get inner lock in 10 secs");
+                }
+                Ok(g) => g,
+            };
+        //let mut receiver = self.inner.lock().await;
         match receiver.try_recv() {
             Ok(m) => Some(m),
             Err(_) => None,
@@ -300,24 +302,24 @@ impl Subscription {
     /// ```
     pub fn with_handler<F>(self, handler: F) -> Handler
     where
-        F: Fn(Message) -> io::Result<()> + Send + 'static,
+        F: Fn(Message) -> io::Result<()> + Send + Sync + 'static,
     {
+        let sub = self.clone();
+        let handler = Arc::new(handler);
+        tokio::spawn(async move {
+            while let Some(m) = sub.next().await {
+                let handler = handler.clone();
+                // just in case the handler blocks, we need to use blocking thread pool
+                let _ = tokio::task::spawn_blocking(move || {
+                    if let Err(e) = handler(m) {
+                        // TODO(dlc) - Capture for last error?
+                        log::error!("Error in callback! {:?}", e);
+                    }
+                });
+            }
+        });
         // This will allow us to not have to capture the return. When it is
         // dropped it will not unsubscribe from the server.
-        let sub = self.clone();
-        thread::Builder::new()
-            .name(format!("nats_subscriber_{}_{}", self.0.sid, self.0.subject))
-            .spawn(move || {
-                futures::executor::block_on(async {
-                    while let Some(m) = sub.next().await {
-                        if let Err(e) = handler(m) {
-                            // TODO(dlc) - Capture for last error?
-                            log::error!("Error in callback! {:?}", e);
-                        }
-                    }
-                })
-            })
-            .expect("threads should be spawn-able");
         Handler { sub: self }
     }
 
@@ -348,12 +350,16 @@ impl Subscription {
         T: futures::Future<Output = io::Result<()>> + Send,
     {
         let sub = self.clone();
+        let handler = Arc::new(handler);
         tokio::spawn(async move {
             while let Some(m) = sub.next().await {
-                if let Err(e) = handler(m).await {
-                    // TODO(dlc) - Capture for last error?
-                    log::error!("Error in callback! {:?}", e);
-                }
+                let handler = handler.clone();
+                let _ = tokio::spawn(async move {
+                    if let Err(e) = handler(m).await {
+                        // TODO(dlc) - Capture for last error?
+                        log::error!("Error in callback! {:?}", e);
+                    }
+                });
             }
         });
         self

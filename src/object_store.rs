@@ -20,23 +20,24 @@ use crate::{
     Message, Stream,
 };
 
-use chrono::Utc;
 use futures::{Future, StreamExt};
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     cmp,
     collections::HashSet,
     io,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::io::ReadBuf;
-use tokio::sync::Mutex;
+use time::{serde::rfc3339, OffsetDateTime};
+use tokio::{io::ReadBuf, sync::Mutex};
 
 const DEFAULT_CHUNK_SIZE: usize = 128 * 1024;
 const NATS_ROLLUP: &str = "Nats-Rollup";
@@ -260,6 +261,7 @@ pub struct ObjectInfo {
     /// Number of chunks the object is stored in.
     pub chunks: usize,
     /// Date and time the object was last modified.
+    #[serde(with = "rfc3339")]
     pub modified: DateTime,
     /// Digest of the object stream.
     pub digest: String,
@@ -544,7 +546,7 @@ impl ObjectStore {
             chunks: object_chunks,
             size: object_size,
             digest: "".to_string(),
-            modified: Utc::now(),
+            modified: OffsetDateTime::now_utc(),
             deleted: false,
         };
 
@@ -585,6 +587,7 @@ impl ObjectStore {
     /// # use nats_aflowt::object_store;
     /// # #[tokio::main]
     /// # async fn main() -> std::io::Result<()> {
+    /// nats_aflowt::init_tracing();
     /// # let client = nats_aflowt::connect("127.0.0.1:14222").await?;
     /// # let context = nats_aflowt::jetstream::new(client);
     /// #
@@ -647,9 +650,9 @@ impl ObjectStore {
     /// bucket.delete("foo").await?;
     ///
     /// let info = bucket.info("foo").await?;
-    /// assert!(info.deleted);
-    /// assert_eq!(info.size, 0);
-    /// assert_eq!(info.chunks, 0);
+    /// assert!(info.deleted, "deleted");
+    /// assert_eq!(info.size, 0, "size=0");
+    /// assert_eq!(info.chunks, 0, "chunks=0");
     ///
     /// # context.delete_object_store("delete").await?;
     /// # Ok(())
@@ -710,14 +713,14 @@ impl ObjectStore {
     ///
     /// let info = watch.next().await.unwrap();
     /// assert_eq!(info.name, "foo");
-    /// assert_eq!(info.size, bytes.len());
+    /// assert_eq!(info.size, bytes.len(), "foo size");
     ///
     /// let bytes = vec![0];
     /// bucket.put("bar", &mut bytes.as_slice()).await?;
     ///
     /// let info = watch.next().await.unwrap();
     /// assert_eq!(info.name, "bar");
-    /// assert_eq!(info.size, bytes.len());
+    /// assert_eq!(info.size, bytes.len(), "bar size");
     ///
     /// # context.delete_object_store("watch").await?;
     /// # Ok(())
@@ -752,6 +755,7 @@ impl Watch {
     fn into_stream(mut self) -> impl Stream<Item = ObjectInfo> {
         async_stream::stream! {
             while let Some(message) = self.subscription.next().await {
+                //if message.data.is_empty() { break; }
                 yield serde_json::from_slice(&message.data).unwrap();
             }
         }

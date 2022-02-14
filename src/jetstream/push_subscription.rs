@@ -12,16 +12,26 @@
 // limitations under the License.
 
 use crate::Stream;
-use std::io;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
+#[cfg(not(feature = "otel"))]
+use log::error;
+use std::{
+    io,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    thread,
+    time::Duration,
+};
+#[cfg(feature = "otel")]
+use tracing::error;
 
-use crate::jetstream::{AckPolicy, ConsumerInfo, ConsumerOwnership, JetStream};
-use crate::message::Message;
-use crate::DEFAULT_FLUSH_TIMEOUT;
+use crate::{
+    jetstream::{AckPolicy, ConsumerInfo, ConsumerOwnership, JetStream},
+    message::Message,
+    DEFAULT_FLUSH_TIMEOUT,
+};
 
 #[derive(Debug)]
 pub(crate) struct Inner {
@@ -175,7 +185,9 @@ impl PushSubscription {
                     }
                     return Some(message);
                 }
-                None => return None,
+                None => {
+                    return None;
+                }
             }
         }
     }
@@ -305,11 +317,25 @@ impl PushSubscription {
     /// ```
     pub fn with_handler<F>(self, handler: F) -> Handler
     where
-        F: Fn(Message) -> io::Result<()> + Send + 'static,
+        F: Fn(Message) -> io::Result<()> + Send + Sync + 'static,
     {
         // This will allow us to not have to capture the return. When it is
         // dropped it will not unsubscribe from the server.
         let sub = self.clone();
+        let handler = Arc::new(handler);
+        tokio::spawn(async move {
+            while let Some(m) = sub.next().await {
+                let handler = handler.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    if let Err(e) = handler(m) {
+                        // TODO(dlc) - Capture for last error?
+                        log::error!("Error in callback! {:?}", e);
+                    }
+                });
+            }
+        });
+        /*
+
         thread::Builder::new()
             .name(format!(
                 "nats_jetstream_push_subscriber_{}_{}",
@@ -318,14 +344,18 @@ impl PushSubscription {
             .spawn(move || {
                 futures::executor::block_on(async {
                     while let Some(m) = sub.next().await {
-                        if let Err(e) = handler(m) {
-                            // TODO(dlc) - Capture for last error?
-                            log::error!("Error in callback! {:?}", e);
-                        }
+                        let handler = handler.clone();
+                        let _ = tokio::spawn(async move {
+                            if let Err(e) = handler(m) {
+                                // TODO(dlc) - Capture for last error?
+                                log::error!("Error in callback! {:?}", e);
+                            }
+                        });
                     }
                 })
             })
             .expect("threads should be spawn-able");
+        */
         Handler { subscription: self }
     }
 
@@ -352,12 +382,16 @@ impl PushSubscription {
         T: futures::Future<Output = io::Result<()>> + Send,
     {
         let sub = self.clone();
+        let handler = Arc::new(Box::new(handler));
         tokio::spawn(async move {
             while let Some(m) = sub.next().await {
-                if let Err(e) = handler(m).await {
-                    // TODO(dlc) - Capture for last error?
-                    log::error!("Error in callback! {:?}", e);
-                }
+                let handler = handler.clone();
+                let _ = tokio::spawn(async move {
+                    if let Err(e) = handler(m).await {
+                        // TODO(dlc) - Capture for last error?
+                        log::error!("Error in callback! {:?}", e);
+                    }
+                });
             }
         });
         self
@@ -388,13 +422,14 @@ impl PushSubscription {
     /// ```
     pub fn with_process_handler<F>(self, handler: F) -> Handler
     where
-        F: Fn(&Message) -> io::Result<()> + Send + 'static,
+        F: Fn(&Message) -> io::Result<()> + Send + Sync + 'static,
     {
         let consumer_ack_policy = self.0.consumer_ack_policy;
 
         // This will allow us to not have to capture the return. When it is
         // dropped it will not unsubscribe from the server.
         let sub = self.clone();
+        let handler = Arc::new(Box::new(handler));
         thread::Builder::new()
             .name(format!(
                 "nats_push_subscriber_{}_{}",
@@ -403,15 +438,18 @@ impl PushSubscription {
             .spawn(move || {
                 futures::executor::block_on(async {
                     while let Some(message) = sub.next().await {
-                        if let Err(err) = handler(&message) {
-                            log::error!("Error in callback! {:?}", err);
-                        }
-
-                        if consumer_ack_policy != AckPolicy::None {
-                            if let Err(err) = message.ack().await {
+                        let handler = handler.clone();
+                        let _ = tokio::spawn(async move {
+                            if let Err(err) = handler(&message) {
                                 log::error!("Error in callback! {:?}", err);
                             }
-                        }
+
+                            if consumer_ack_policy != AckPolicy::None {
+                                if let Err(err) = message.ack().await {
+                                    log::error!("Error in callback! {:?}", err);
+                                }
+                            }
+                        });
                     }
                 })
             })
@@ -420,7 +458,7 @@ impl PushSubscription {
     }
 
     /// Process and acknowledge a single message, waiting indefinitely for
-    /// one to arrive.
+    /// one to arrive. Caution: This should not be used with blocking io.
     ///
     /// Does not acknowledge the processed message if the closure returns an `Err`.
     ///
@@ -443,18 +481,32 @@ impl PushSubscription {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn process<R, F: Fn(&Message) -> io::Result<R>>(&mut self, f: F) -> io::Result<R> {
-        if let Some(next) = self.next().await {
-            let result = f(&next)?;
-            if self.0.consumer_ack_policy != AckPolicy::None {
-                next.ack().await?;
-            }
-            Ok(result)
-        } else {
-            Err(io::Error::new(
+    pub async fn process<R: Send + 'static, F: Fn(&Message) -> io::Result<R> + Send + Sync>(
+        &mut self,
+        f: F,
+    ) -> io::Result<R>
+    where
+        F: 'static,
+    {
+        let ack_policy = self.0.consumer_ack_policy;
+        match self.next().await {
+            Some(next) => tokio::task::spawn(async move {
+                // calling f() may block the tokio executor if f blocks.
+                // the executor is not blocked for the call to next() or the ack()
+                let result = f(&next);
+                if ack_policy != AckPolicy::None {
+                    if let Err(e) = next.ack().await {
+                        error!("ack error: {}", e);
+                    }
+                }
+                result
+            })
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("join error: {}", e)))?,
+            _ => Err(io::Error::new(
                 io::ErrorKind::Other,
                 "process: unsubscribed",
-            ))
+            )),
         }
     }
 
@@ -626,7 +678,7 @@ impl PushSubscription {
     /// subscription.drain().await?;
     ///
     /// # // there are no more messages in subscription
-    /// # assert!(subscription.next_timeout(Duration::from_secs(2)).await.is_err());
+    /// # assert!(subscription.next_timeout(Duration::from_secs(2)).await.is_err(), "emtpy");
     /// # Ok(())
     /// # }
     /// ```

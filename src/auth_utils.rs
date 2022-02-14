@@ -11,9 +11,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::fs;
-use std::io::{self, BufReader, ErrorKind};
-use std::path::Path;
+use std::{
+    fs,
+    io::{self, BufReader, ErrorKind},
+    path::Path,
+};
 
 use crate::tokio_rustls::rustls::{Certificate, PrivateKey};
 use nkeys::KeyPair;
@@ -119,11 +121,11 @@ pub(crate) fn load_key(path: &Path) -> io::Result<PrivateKey> {
     loop {
         let cert = rustls_pemfile::read_one(&mut reader)?;
         match cert {
-            Some(rustls_pemfile::Item::RSAKey(key)) | Some(rustls_pemfile::Item::PKCS8Key(key)) => {
-                return Ok(PrivateKey(key))
-            }
-            // if public key is found, don't error, just skip it and hope to find client key next.
-            Some(rustls_pemfile::Item::X509Certificate(_)) => {}
+            Some(rustls_pemfile::Item::RSAKey(key))
+            | Some(rustls_pemfile::Item::PKCS8Key(key))
+            | Some(rustls_pemfile::Item::ECKey(key)) => return Ok(PrivateKey(key)),
+            // if other types of key found, skip
+            Some(_) => {}
             None => break,
         }
     }

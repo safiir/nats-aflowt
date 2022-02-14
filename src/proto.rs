@@ -13,12 +13,13 @@
 
 use std::convert::TryFrom;
 //use std::io::prelude::*;
-use std::io::{self, Error, ErrorKind};
-use std::str::{self, FromStr};
+use std::{
+    io::{self, Error, ErrorKind},
+    str::{self, FromStr},
+};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::connect::ConnectInfo;
-use crate::{header::HeaderMap, inject_io_failure, ServerInfo};
+use crate::{connect::ConnectInfo, header::HeaderMap, inject_io_failure, ServerInfo};
 
 /// A protocol operation sent by the server.
 #[derive(Debug)]

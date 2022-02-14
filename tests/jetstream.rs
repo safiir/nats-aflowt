@@ -78,7 +78,7 @@ async fn jetstream_publish() {
     // Basic publish like NATS core.
     let ack = js.publish("foo", &msg).await.unwrap();
     assert_eq!(ack.stream, "TEST");
-    assert_eq!(ack.sequence, 1);
+    assert_eq!(ack.sequence, 1, "seq 1");
     assert_eq!(js.stream_info("TEST").await.unwrap().state.messages, 1);
 
     // Test stream expectation.
@@ -149,7 +149,7 @@ async fn jetstream_publish() {
         .unwrap();
 
     assert_eq!(ack.stream, "TEST");
-    assert_eq!(ack.sequence, 2);
+    assert_eq!(ack.sequence, 2, "seq 2");
     assert_eq!(js.stream_info("TEST").await.unwrap().state.messages, 2);
 
     // Send in the same message with same message id.

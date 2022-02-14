@@ -18,6 +18,7 @@ use futures::stream::StreamExt;
 use nats_aflowt::{jetstream::StreamConfig, kv::*};
 
 #[tokio::test]
+#[tracing::instrument]
 async fn key_value_entry() {
     let server = util::run_server("tests/configs/jetstream.conf");
     let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
@@ -38,11 +39,11 @@ async fn key_value_entry() {
 
     // Put
     let revision = kv.put("foo", b"bar").await.unwrap();
-    assert_eq!(revision, 1);
+    assert_eq!(revision, 1, "first foo");
 
     let entry = kv.entry("foo").await.unwrap().unwrap();
     assert_eq!(entry.value, b"bar");
-    assert_eq!(entry.revision, 1);
+    assert_eq!(entry.revision, 1, "first bar");
 
     let value = kv.get("foo").await.unwrap();
     assert_eq!(value, Some(b"bar".to_vec()));
@@ -76,6 +77,7 @@ async fn key_value_entry() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn key_value_short_history() {
     let server = util::run_server("tests/configs/jetstream.conf");
     let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
@@ -104,6 +106,7 @@ async fn key_value_short_history() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn key_value_long_history() {
     let server = util::run_server("tests/configs/jetstream.conf");
     let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
@@ -132,6 +135,7 @@ async fn key_value_long_history() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn key_value_watch() {
     let server = util::run_server("tests/configs/jetstream.conf");
     let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
@@ -172,6 +176,7 @@ async fn key_value_watch() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn key_value_watch_all() {
     let server = util::run_server("tests/configs/jetstream.conf");
     let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
@@ -208,7 +213,7 @@ async fn key_value_watch_all() {
     let entry = watch.next().await.unwrap();
     assert_eq!(entry.key, "foo".to_string());
     assert_eq!(entry.value, b"lorem");
-    assert_eq!(entry.revision, 1);
+    assert_eq!(entry.revision, 1, "first foo");
 
     kv.put("foo", b"ipsum").await.unwrap();
     let entry = watch.next().await.unwrap();
@@ -224,6 +229,7 @@ async fn key_value_watch_all() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn key_value_bind() {
     let server = util::run_server("tests/configs/jetstream.conf");
     let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
@@ -255,6 +261,7 @@ async fn key_value_bind() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn key_value_delete() {
     let server = util::run_server("tests/configs/jetstream.conf");
     let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
@@ -275,6 +282,7 @@ async fn key_value_delete() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn key_value_purge() {
     let server = util::run_server("tests/configs/jetstream.conf");
     let client = nats_aflowt::connect(&server.client_url()).await.unwrap();
@@ -306,10 +314,11 @@ async fn key_value_purge() {
     assert_eq!(value, None);
 
     let entries = bucket.history("foo").await.unwrap();
-    assert_eq!(entries.count().await, 1);
+    assert_eq!(entries.count().await, 1, "one foo entry");
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn key_value_keys() {
     use futures::stream::StreamExt as _;
 
