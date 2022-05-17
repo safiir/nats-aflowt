@@ -22,6 +22,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
@@ -236,7 +237,7 @@ impl Connector {
         inject_io_failure()?;
 
         // Connect to the remote socket.
-        let mut stream = TcpStream::connect(addr).await?;
+        let mut stream = TcpStream::from_std(std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(2)).unwrap()).unwrap();
         stream.set_nodelay(true)?;
 
         // Expect an INFO message.
